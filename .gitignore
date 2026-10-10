@@ -1,0 +1,29 @@
+# ---- 依赖（仅测试脚本需要，不进版本库）----
+node_modules/
+package-lock.json
+npm-debug.log*
+
+# ---- 本地缓存 / 系统文件 ----
+.npm-cache/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- 编辑器 ----
+.vscode/
+.idea/
+*.swp
+
+# ---- 含真实数据的文件，不要提交 ----
+# 未脱敏的原始战报表
+原始战报*.csv
+raw/
+private/
+# 页面「导出存档」产生的文件（含真实同盟/玩家名）
+战报累计存档_*.json
+*.battle-backup.json
+
+# ---- 临时产物 ----
+*.tmp
+*.log
+tools/shots/

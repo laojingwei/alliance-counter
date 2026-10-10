@@ -1,0 +1,17 @@
+# 默认按文本处理并在检出时使用 LF，保持跨平台一致
+* text=auto eol=lf
+
+# Windows 批处理与 Excel 友好的 CSV 保留 CRLF
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.csv text eol=crlf
+
+# 二进制
+*.png binary
+*.jpg binary
+*.gif binary
+
+# 更新脚本的换行符（cmd 要 CRLF，mac 脚本要 LF）
+*.cmd text eol=crlf
+*.command text eol=lf
+

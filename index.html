@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<!-- 禁止缓存：本地 file:// 打开时，浏览器缓存旧的 js/css 会导致新功能（如兵种徽章）不显示 -->
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="0" />
+<title>xww-三国谋定天下：同盟对战 · 阵容克制关系图</title>
+<link rel="stylesheet" href="css/style.css?v=20261011i" />
+</head>
+<body data-repo="https://github.com/laojingwei/alliance-counter">
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo"></span>
+    <div class="brand-text">
+      <h1>xww-三国谋定天下：同盟对战 · 阵容克制关系<span class="build-tag" id="buildTag">v-</span></h1>
+      <p id="dataSummary">尚未导入数据</p>
+    </div>
+  </div>
+
+  <div class="stat-strip" id="statStrip">
+    <div class="stat"><span class="stat-num" id="statBattles">0</span><span class="stat-label">有效战斗</span></div>
+    <div class="stat"><span class="stat-num" id="statNodes">0</span><span class="stat-label">阵容数</span></div>
+    <div class="stat"><span class="stat-num" id="statEdges">0</span><span class="stat-label">克制关系</span></div>
+    <div class="stat"><span class="stat-num" id="statPairs">0</span><span class="stat-label">对阵组合</span></div>
+    <div class="stat"><span class="stat-num" id="statBatches">0</span><span class="stat-label">数据批次</span></div>
+  </div>
+
+  <div class="topbar-actions">
+    <button class="btn btn-ghost" id="btnExport" title="把当前累计数据导出为 JSON 存档">导出存档</button>
+    <button class="btn btn-ghost" id="btnImportJson" title="从 JSON 存档恢复累计数据">恢复存档</button>
+    <button class="btn btn-ghost" id="btnCheckUpdate" title="检查有没有新版本">版本检查</button>
+    <button class="btn btn-primary" id="btnImport">导入战报表</button>
+    <div class="update-panel" id="updatePanel"></div>
+  </div>
+</header>
+
+<main class="layout">
+
+  <!-- ================= 左侧：导入与筛选 ================= -->
+  <aside class="panel sidebar">
+    <section class="block">
+      <h2 class="block-title">数据导入（自动叠加）</h2>
+      <div class="dropzone" id="dropzone">
+        <div class="dropzone-inner">
+          <strong>拖入 CSV 战报表</strong>
+          <span>或点击选择文件，可一次选多个</span>
+        </div>
+      </div>
+      <p class="hint">每次导入都会与已有数据合并去重（按「战斗Key」去重），不会覆盖历史记录。</p>
+      <div class="batch-list" id="batchList"></div>
+      <div class="row-actions">
+        <button class="btn btn-ghost btn-sm" id="btnLoadSample">载入示例表</button>
+        <button class="btn btn-ghost btn-sm danger" id="btnClearAll">清空全部数据</button>
+      </div>
+      <div class="row-actions">
+        <button class="btn btn-accent btn-sm" id="btnBuildSample" title="把某份表转换成页面内置的示例数据">⇩ 生成内置数据</button>
+      </div>
+      <p class="hint">「生成内置数据」会把选中的表（默认自动脱敏）转换成 <b>sample-data.js</b>，
+        下载后覆盖项目里的 <b>js/sample-data.js</b> 即可更新内置示例。</p>
+    </section>
+
+    <section class="block">
+      <h2 class="block-title">分析维度</h2>
+      <div class="seg" id="dimSeg">
+        <button class="seg-btn active" data-dim="comp">阵容</button>
+        <button class="seg-btn" data-dim="formation">阵型</button>
+      </div>
+      <p class="hint" id="dimHint">比较整套武将组合之间的相互胜率。</p>
+    </section>
+
+    <section class="block">
+      <h2 class="block-title">样本过滤</h2>
+
+      <label class="field">
+        <span class="field-label">最少对阵场次 <b id="minPairVal">2</b></span>
+        <input type="range" id="minPair" min="1" max="10" step="1" value="2" />
+      </label>
+
+      <label class="field">
+        <span class="field-label">最少出场次数 <b id="minAppearVal">3</b></span>
+        <input type="range" id="minAppear" min="1" max="30" step="1" value="3" />
+      </label>
+
+      <label class="field">
+        <span class="field-label">最低单位等级 <b id="minLevelVal">40</b></span>
+        <input type="range" id="minLevel" min="0" max="50" step="5" value="40" />
+      </label>
+
+      <label class="check"><input type="checkbox" id="onlyFull" checked /> 只统计双方满编且人数相同的对局</label>
+      <label class="check"><input type="checkbox" id="excludeMirror" checked /> 排除同名阵容内战（无克制方向）</label>
+      <label class="check"><input type="checkbox" id="excludeDraw" /> 平局不计入胜率分母</label>
+
+      <div class="filter-divider">培养度控制（需要武将级明细表）</div>
+      <label class="check"><input type="checkbox" id="onlyRedParity" checked /> 只统计<b>红度对等</b>的对局</label>
+      <p class="hint" style="margin:-4px 0 9px 22px">排除「满红碾压白板」的场次，避免污染克制结论</p>
+      <label class="field">
+        <span class="field-label">红度「对等」允许的差值 <b id="redGapVal">1</b></span>
+        <input type="range" id="redGap" min="0" max="3" step="1" value="1" />
+      </label>
+      <label class="field">
+        <span class="field-label">双方最低平均红度 <b id="minRedAvgVal">0</b></span>
+        <input type="range" id="minRedAvg" min="0" max="5" step="1" value="0" />
+      </label>
+      <label class="check"><input type="checkbox" id="onlyPinParity" /> 只统计<b>品级对等</b>的对局</label>
+
+      <div class="field">
+        <span class="field-label">克制关系按培养水平分层</span>
+        <div class="seg seg-sm" id="redTierSeg">
+          <button class="seg-btn active" data-tier="all">全部</button>
+          <button class="seg-btn" data-tier="low">低红</button>
+          <button class="seg-btn" data-tier="mid">中红</button>
+          <button class="seg-btn" data-tier="high">高红</button>
+        </div>
+        <p class="hint" style="margin-top:6px">同一对阵容在不同红度下可能是相反的克制关系——切换档位就能看到</p>
+      </div>
+
+      <div class="field">
+        <span class="field-label">品级分层</span>
+        <div class="seg seg-sm" id="pinTierSeg">
+          <button class="seg-btn active" data-tier="all">全部</button>
+          <button class="seg-btn" data-tier="low">低品</button>
+          <button class="seg-btn" data-tier="mid">中品</button>
+          <button class="seg-btn" data-tier="high">高品</button>
+        </div>
+      </div>
+
+      <div class="row-actions">
+        <button class="btn btn-ghost btn-sm" id="btnResetFilter">重置过滤</button>
+        <span class="hint inline" id="filterStat"></span>
+      </div>
+    </section>
+
+    <section class="block">
+      <h2 class="block-title">显示</h2>
+      <label class="check"><input type="checkbox" id="showLabels" checked /> 显示阵容名称</label>
+      <label class="check"><input type="checkbox" id="showParticles" checked /> 克制方向流动动画</label>
+      <label class="check"><input type="checkbox" id="onlyStrong" /> 只显示强克制（|优势| &gt; 25%）</label>
+      <label class="field">
+        <span class="field-label">最多展示阵容数 <b id="topNVal">30</b></span>
+        <input type="range" id="topN" min="8" max="80" step="2" value="30" />
+      </label>
+      <div class="row-actions">
+        <button class="btn btn-ghost btn-sm" id="btnRelayout">重新布局</button>
+        <button class="btn btn-ghost btn-sm" id="btnExportPng">导出 PNG</button>
+      </div>
+    </section>
+  </aside>
+
+  <!-- ================= 中间：可视化舞台 ================= -->
+  <section class="stage">
+    <div class="view-tabs">
+      <button class="tab active" data-view="graph">克制网络图</button>
+      <button class="tab" data-view="matrix">克制矩阵</button>
+      <button class="tab" data-view="rank">强度排行</button>
+      <button class="tab" data-view="alliance">同盟分析</button>
+      <button class="tab" data-view="heroes">武将分析</button>
+      <button class="tab" data-view="table">原始战报</button>
+      <div class="tabs-spacer"></div>
+      <div class="legend" id="legend"></div>
+    </div>
+
+    <div class="stage-body">
+      <div class="view active" id="view-graph">
+        <canvas id="graphCanvas"></canvas>
+        <div class="graph-mode">
+          <div class="seg seg-sm" id="graphModeSeg">
+            <button class="seg-btn active" data-mode="2d">2D 平面</button>
+            <button class="seg-btn" data-mode="3d">3D 立体</button>
+          </div>
+          <p class="hint" id="graphModeHint">2D 更适合看清克制关系</p>
+        </div>
+        <div class="canvas-overlay" id="graphTip"></div>
+        <div class="empty-state" id="graphEmpty">
+          <h3>还没有数据</h3>
+          <p>在左侧拖入战报 CSV，或点击「载入示例表」体验。</p>
+        </div>
+      </div>
+
+      <div class="view" id="view-matrix">
+        <canvas id="matrixCanvas"></canvas>
+        <div class="canvas-overlay" id="matrixTip"></div>
+      </div>
+
+      <div class="view" id="view-rank">
+        <div class="rank-wrap" id="rankWrap"></div>
+      </div>
+
+      <div class="view" id="view-alliance">
+        <div class="ally-wrap">
+          <aside class="ally-list" id="allyList"></aside>
+          <div class="ally-detail" id="allyDetail"></div>
+        </div>
+      </div>
+
+      <div class="view" id="view-heroes">
+        <div class="ally-wrap">
+          <aside class="ally-list" id="heroList"></aside>
+          <div class="ally-detail" id="heroDetail"></div>
+        </div>
+      </div>
+
+      <div class="view" id="view-table">
+        <div class="table-wrap">
+          <table class="data-table" id="dataTable">
+            <thead></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="pager" id="tablePager"></div>
+      </div>
+    </div>
+
+    <div class="stage-foot" id="stageFoot"></div>
+  </section>
+
+  <!-- ================= 右侧：详情 ================= -->
+  <aside class="panel inspector" id="inspector">
+    <div class="inspector-empty">
+      <h3>选中一个节点或一条连线</h3>
+      <p>点击网络图中的节点 / 连线，或矩阵中的格子，这里会显示胜率拆解、攻守差异与原始战报明细。</p>
+    </div>
+  </aside>
+
+</main>
+
+<div class="global-drop" id="globalDrop"><div class="global-drop-inner">松开鼠标，导入战报表</div></div>
+<div class="toast-host" id="toastHost"></div>
+
+<!-- ================= 生成内置数据面板 ================= -->
+<div class="drawer-mask" id="genMask"></div>
+<aside class="drawer" id="genDrawer" aria-hidden="true">
+  <header class="drawer-head">
+    <div>
+      <h2>生成内置数据</h2>
+      <p class="drawer-sub">把一张战报表转换成页面内置的示例数据</p>
+    </div>
+    <button class="drawer-close" id="genClose" title="关闭（Esc）">✕</button>
+  </header>
+
+  <div class="drawer-body">
+    <section class="block">
+      <h2 class="block-title">1 · 选择数据来源</h2>
+      <select class="select" id="genSource"></select>
+      <p class="hint">可以选全部累计数据，也可以只选某一次导入的表。</p>
+    </section>
+
+    <section class="block">
+      <h2 class="block-title">2 · 脱敏设置</h2>
+      <label class="check"><input type="checkbox" id="genAnon" checked /> 脱敏同盟名与玩家名（强烈建议保持开启）</label>
+      <label class="check"><input type="checkbox" id="genAnonId" /> 同时替换战斗Key里的数字 ID</label>
+      <label class="check"><input type="checkbox" id="genAnonPlace" /> 同时替换地点坐标</label>
+      <p class="hint" id="genAnonWarn">内置数据会随项目一起分发给别人，关闭脱敏会把真实同盟 / 玩家名写进去。</p>
+    </section>
+
+    <section class="block">
+      <h2 class="block-title">3 · 转换预览</h2>
+      <div class="gen-preview" id="genPreview"></div>
+    </section>
+
+    <section class="block">
+      <h2 class="block-title">4 · 下载并替换</h2>
+      <div class="row-actions">
+        <button class="btn btn-primary btn-sm" id="genDownloadJs">下载 sample-data.js</button>
+        <button class="btn btn-ghost btn-sm" id="genDownloadCsv">下载配套 CSV</button>
+      </div>
+      <p class="hint">把下载的 <b>sample-data.js</b> 覆盖到项目的 <b>js/sample-data.js</b>，刷新页面即可生效；
+        同时用配套 CSV 覆盖 <b>samples/</b> 里的示例表，便于一起提交到 git。</p>
+    </section>
+  </div>
+</aside>
+
+<input type="file" id="fileInput" accept=".csv,.txt" multiple hidden />
+<input type="file" id="jsonInput" accept=".json" hidden />
+
+<script src="js/util.js?v=20261011i"></script>
+<script src="js/csv.js?v=20261011i"></script>
+<script src="js/model.js?v=20261011i"></script>
+<script src="js/detail.js?v=20261011i"></script>
+<script src="js/anonymize.js?v=20261011i"></script>
+<script src="js/store.js?v=20261011i"></script>
+<script src="js/analyzer.js?v=20261011i"></script>
+<script src="js/graph.js?v=20261011i"></script>
+<script src="js/matrix.js?v=20261011i"></script>
+<script src="js/rank.js?v=20261011i"></script>
+<script src="js/table.js?v=20261011i"></script>
+<script src="js/alliance.js?v=20261011i"></script>
+<script src="js/heroes.js?v=20261011i"></script>
+<script src="js/sample-data.js?v=20261011i"></script>
+<script src="js/update.js?v=20261011i"></script>
+<script src="js/app.js?v=20261011i"></script>
+</body>
+</html>
