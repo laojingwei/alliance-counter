@@ -1,8 +1,9 @@
 {
-  "version": "20261011i",
+  "version": "20261011j",
   "releasedAt": "2026-10-11",
-  "name": "一键更新脚本（Windows / macOS）",
+  "name": "打包与离线更新",
   "notes": [
+    "新增 pack-release（打包）与 update-from-zip（离线更新）：把 zip 拖到脚本上即可自动更新，适合连不上 GitHub 的环境",
     "新增 update-windows.cmd 与 update-mac.command：双击即可自动更新，绕过浏览器无法替换本地文件的限制",
     "脚本会自动选择更新方式：git 仓库走 git pull，否则下载最新版覆盖",
     "脚本更新前会整目录备份，并保留 samples/ 目录与你的仓库地址配置",
