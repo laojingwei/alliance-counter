@@ -14,6 +14,261 @@ window.AC = window.AC || {};
 
   /* ==================== 一、聚合 ==================== */
 
+  /**
+   * 单个武将的配置指纹。
+   * 技能 / 技能品级 / 兵书 / 装备（含特技特效）/ 战马（含特技特效）任一不同，
+   * 就算作另一套配置；兵种、红度、等级属于养成程度，不参与区分。
+   */
+  function heroConfigSig(h) {
+    if (!h) return '-';
+    return [
+      h.name || '',
+      (h.skills || []).join('\u0001'),
+      (h.skillPins || []).join('\u0001'),
+      (h.books || []).join('\u0001'),
+      h.equip || '', h.equipSkill || '', h.equipEffect || '',
+      h.horse || '', h.horseSkill || '', h.horseEffect || ''
+    ].join('\u0002');
+  }
+
+  /** 一整支部队的配置指纹（与武将顺序无关）；阵型不同也算另一套配置 */
+  function compConfigSig(heroes, formation) {
+    return (heroes || []).map(heroConfigSig).sort().join('\u0003') + '\u0004' + (formation || '');
+  }
+
+  /* ---------------- 阵型站位表 ----------------
+     取自游戏内「阵型」预览：r=1 前排 / r=2 后排，c=1..3 为从左到右的列。
+     slots 的顺序就是武将的填充顺序（先前排后后排），与游戏内一致。 */
+  const FORMATIONS = {
+    '一字阵': {
+      note: '前排受到伤害降低 8%',
+      slots: [{ r: 1, c: 1 }, { r: 1, c: 2 }, { r: 1, c: 3 }]
+    },
+    '箕形阵': {
+      note: '前排受到伤害降低 6%，后排造成伤害提升 12%',
+      slots: [{ r: 1, c: 2 }, { r: 2, c: 2 }, { r: 2, c: 3 }]
+    },
+    '雁形阵': {
+      note: '前排统率提升 20 点，后排造成伤害提升 15%',
+      slots: [{ r: 1, c: 2 }, { r: 1, c: 3 }, { r: 2, c: 1 }]
+    },
+    '方圆阵': {
+      note: '前排受到伤害降低 5%，后排连击率提升 40%',
+      slots: [{ r: 1, c: 1 }, { r: 1, c: 2 }, { r: 2, c: 3 }]
+    },
+    '锥形阵': {
+      note: '前排造成伤害提升 16%，后排受到伤害降低 5%',
+      slots: [{ r: 1, c: 2 }, { r: 2, c: 1 }, { r: 2, c: 3 }]
+    },
+    '鱼鳞阵': {
+      note: '前排规避率提升 12%，后排会心和奇谋几率提升 8%',
+      slots: [{ r: 1, c: 1 }, { r: 2, c: 2 }, { r: 2, c: 3 }]
+    },
+    '钩行阵': {
+      note: '前排受到伤害降低 8%，后排连击率提升 25%',
+      slots: [{ r: 1, c: 3 }, { r: 2, c: 1 }, { r: 2, c: 2 }]
+    },
+    '偃月阵': {
+      note: '前排造成伤害提升 14%，后排受到伤害降低 5%',
+      slots: [{ r: 1, c: 1 }, { r: 1, c: 3 }, { r: 2, c: 2 }]
+    }
+  };
+
+  /** 取阵型名对应的中文别名（游戏里也叫「阵型名」），并给出站位与特性 */
+  function formationOf(name) {
+    const key = String(name || '').replace(/阵$/, '') + '阵';
+    if (FORMATIONS[key]) return { name: key, note: FORMATIONS[key].note, slots: FORMATIONS[key].slots };
+    return null;
+  }
+
+  /* ---------------- 阵容配置详情浮层 ----------------
+     同一套阵容（相同的武将组合）玩家常常换技能 / 兵书 / 装备 / 战马，
+     这里把每一种配置分别列出。武将卡样式参考游戏内战报：卡面 + 技能 + 装备。 */
+  /** 一个武将的配置卡（紧凑版：技能/兵书横排标签，装马单行） */
+  function heroCard(h) {
+    const card = U.el('div', { class: 'hc-hero' });
+    const avatar = AC.heroIcon ? AC.heroIcon(h.name, 'hc-hero-face') : U.el('div', { class: 'hc-hero-face' });
+
+    card.appendChild(U.el('div', { class: 'hc-hero-head' }, [
+      avatar,
+      U.el('div', { class: 'hc-hero-id' }, [
+        U.el('div', { class: 'hc-hero-name' }, [
+          U.el('span', { text: h.name || '-' }),
+          h.troop ? U.troopBadge(h.troop) : null
+        ]),
+        U.el('div', { class: 'hc-hero-sub' }, [
+          U.el('span', { text: 'Lv ' + (h.level === null || h.level === undefined ? '-' : Math.round(h.level)) }),
+          (h.red === null || h.red === undefined) ? null : U.el('span', { class: 'hc-red', text: '红 ' + h.red }),
+          (h.pin === null || h.pin === undefined) ? null : U.el('span', { text: '品 ' + h.pin })
+        ])
+      ])
+    ]));
+
+    /** 一行标签：左侧固定小标题，右侧自动换行的标签 */
+    function chipRow(label, chips) {
+      const list = chips.filter(Boolean);
+      if (!list.length) return null;
+      return U.el('div', { class: 'hc-block' }, [
+        U.el('span', { class: 'hc-block-t', text: label }),
+        U.el('div', { class: 'hc-chips' }, list)
+      ]);
+    }
+
+    // 技能（带品级）
+    const skillChips = [];
+    (h.skills || []).forEach(function (s, i) {
+      if (!s) return;
+      const pin = (h.skillPins || [])[i];
+      skillChips.push(U.el('span', { class: 'hc-chip', title: s }, [
+        U.el('span', { text: s }),
+        (pin === null || pin === undefined) ? null : U.el('span', { class: 'hc-pin', text: pin + '品' })
+      ]));
+    });
+    card.appendChild(chipRow('技能', skillChips));
+
+    // 兵书
+    card.appendChild(chipRow('兵书', (h.books || []).map(function (bk) {
+      return bk ? U.el('span', { class: 'hc-chip', title: bk, text: bk }) : null;
+    })));
+
+    // 装备 / 战马：各压成一行（名称 + 特技 + 特效）
+    card.appendChild(chipRow('装备', h.equip ? [
+      U.el('span', { class: 'hc-chip hc-chip-gear', title: h.equip, text: h.equip }),
+      h.equipSkill ? U.el('span', { class: 'hc-extra', text: '特技·' + h.equipSkill }) : null,
+      h.equipEffect ? U.el('span', { class: 'hc-extra', text: '特效·' + h.equipEffect }) : null
+    ] : []));
+    card.appendChild(chipRow('战马', h.horse ? [
+      U.el('span', { class: 'hc-chip hc-chip-gear', title: h.horse, text: h.horse }),
+      h.horseSkill ? U.el('span', { class: 'hc-extra', text: '特技·' + h.horseSkill }) : null,
+      h.horseEffect ? U.el('span', { class: 'hc-extra', text: '特效·' + h.horseEffect }) : null
+    ] : []));
+
+    return card;
+  }
+
+  /** 一个配置块：可选头部（场次/胜率）+ 阵型条 + 按阵型站位的武将 */
+  function configBlock(cfg, index, opts) {
+    opts = opts || {};
+    const box = U.el('div', { class: 'hc-cfg' + (index === 0 ? ' main' : '') });
+
+    if (!opts.hideHead) {
+      box.appendChild(U.el('div', { class: 'hc-cfg-head' }, [
+        U.el('span', { class: 'hc-cfg-rank', text: index === 0 ? '最常用' : '配置 ' + (index + 1) }),
+        U.el('span', { class: 'hc-cfg-n', text: cfg.n + ' 场' }),
+        (cfg.rate === null || cfg.rate === undefined) ? null
+          : U.el('span', { class: 'hc-cfg-rate', style: { color: U.rateColor(cfg.rate) }, text: '胜率 ' + U.fmtPct(cfg.rate, 0) }),
+        (cfg.redAvg === null || cfg.redAvg === undefined) ? null
+          : U.el('span', { class: 'hc-cfg-red', text: '均红 ' + cfg.redAvg.toFixed(1) }),
+        cfg.lastTs ? U.el('span', {
+          class: 'hc-cfg-time',
+          text: '最近 ' + new Date(cfg.lastTs).toLocaleString('zh-CN', { hour12: false })
+        }) : null
+      ]));
+    }
+
+    // 阵型：有对应阵型就按游戏内的前后排站位摆放，否则退回平铺
+    const fm = formationOf(cfg.formation);
+    box.appendChild(U.el('div', { class: 'hc-fm-bar' }, [
+      U.el('span', { class: 'hc-fm-name', text: cfg.formation || '阵型未知' }),
+      fm ? U.el('span', { class: 'hc-fm-note', text: fm.note })
+        : U.el('span', { class: 'hc-fm-note', text: '（该阵型暂无站位数据，已按顺序平铺）' })
+    ]));
+
+    if (fm) {
+      const board = U.el('div', { class: 'fm-board' });
+      [[1, '前排'], [2, '后排']].forEach(function (lane) {
+        const r = lane[0];
+        const slots = fm.slots.filter(function (s) { return s.r === r; });
+        const wrap = U.el('div', { class: 'fm-lane' + (slots.length ? '' : ' empty') }, [
+          U.el('div', { class: 'fm-lane-t', text: lane[1] + (slots.length ? '（' + slots.length + ' 人）' : '（无人）') })
+        ]);
+        const grid = U.el('div', { class: 'fm-slots' });
+        slots.forEach(function (s) {
+          grid.appendChild(U.el('div', { class: 'fm-slot', style: { gridColumn: String(s.c) } }));
+        });
+        wrap.appendChild(grid);
+        board.appendChild(wrap);
+      });
+      const slotNodes = Array.prototype.slice.call(board.querySelectorAll('.fm-slot'));
+      (cfg.heroes || []).forEach(function (h, i) {
+        const target = slotNodes[i] || slotNodes[slotNodes.length - 1];
+        if (target) {
+          target.appendChild(heroCard(h));
+          target.classList.add('filled');
+        }
+      });
+      box.appendChild(board);
+    } else {
+      const grid = U.el('div', { class: 'hc-heroes' });
+      (cfg.heroes || []).forEach(function (h) { grid.appendChild(heroCard(h)); });
+      box.appendChild(grid);
+    }
+    return box;
+  }
+
+  /** 通用浮层外壳：返回 { mask, body, close } */
+  function makePopup() {
+    const mask = U.el('div', { class: 'bl-mask' });
+    const panel = U.el('div', { class: 'bl-panel hc-panel' });
+    const body = U.el('div', { class: 'hc-body' });
+    function close() {
+      mask.remove();
+      document.removeEventListener('keydown', onKey);
+    }
+    function onKey(e) { if (e.key === 'Escape') close(); }
+    function finish(titleNode) {
+      panel.appendChild(U.el('div', { class: 'bl-title' }, [
+        titleNode,
+        U.el('button', { class: 'bl-close', text: '×', title: '关闭（Esc）', onclick: close })
+      ]));
+      panel.appendChild(body);
+      mask.appendChild(panel);
+      mask.addEventListener('click', function (e) { if (e.target === mask) close(); });
+      document.body.appendChild(mask);
+      document.addEventListener('keydown', onKey);
+    }
+    return { mask: mask, body: body, close: close, finish: finish };
+  }
+
+  function openCompConfig(playerName, player, comp) {
+    const configs = comp.configList || [];
+    const pop = makePopup();
+
+    pop.finish(U.el('div', { class: 'bl-title-l' }, [
+      U.el('b', { text: playerName }),
+      U.el('span', { text: ' · ' }),
+      U.el('span', {}, [U.compWithTroop(comp.display, comp.troopSig)]),
+      U.el('span', { class: 'hc-count', text: '共 ' + configs.length + ' 种配置 · ' + comp.n + ' 场' })
+    ]));
+
+    if (!configs.length) {
+      pop.body.appendChild(U.el('div', { class: 'hint', text: '这套阵容没有可展示的配置明细（需要导入带技能 / 装备列的明细表）。' }));
+    } else {
+      configs.forEach(function (cfg, i) {
+        pop.body.appendChild(configBlock(cfg, i));
+      });
+    }
+  }
+
+  /** 战报浮层里某一方的配置详情（单场：直接取该场的武将快照 + 阵型） */
+  function openSideConfig(playerName, side, opts) {
+    opts = opts || {};
+    const pop = makePopup();
+
+    pop.finish(U.el('div', { class: 'bl-title-l' }, [
+      U.el('b', { text: playerName }),
+      U.el('span', { text: ' · ' }),
+      U.el('span', {}, [U.compWithTroop(side.compRaw || side.display || '-', side.troopSig)]),
+      opts.sub ? U.el('span', { class: 'hc-count', text: opts.sub }) : null
+    ]));
+
+    pop.body.appendChild(configBlock({
+      heroes: side.heroes || [],
+      formation: side.formation || '',
+      n: null, rate: null, redAvg: null, lastTs: 0
+    }, 0, { hideHead: true }));
+  }
+
   function blank(name) {
     return {
       name: name, n: 0, win: 0, loss: 0, draw: 0,
@@ -96,9 +351,34 @@ window.AC = window.AC || {};
           else if (won) po.win++;
           else po.loss++;
           if (ck) {
-            const pc = po.comps.get(ck) || { key: ck, display: s.me.compRaw || ck, n: 0 };
+            let pc = po.comps.get(ck);
+            if (!pc) {
+              pc = {
+                key: ck, display: s.me.compRaw || ck, troopSig: s.me.troopSig || '',
+                n: 0, win: 0, draw: 0, configs: new Map()
+              };
+              po.comps.set(ck, pc);
+            }
             pc.n++;
-            po.comps.set(ck, pc);
+            if (b.result === 'draw') pc.draw++;
+            else if (won) pc.win++;
+            // 同一套阵容，玩家也可能换技能 / 兵书 / 装备 / 战马 / 阵型 —— 逐套留档
+            const cfgSig = compConfigSig(s.me.heroes, s.me.formation);
+            let cfg = pc.configs.get(cfgSig);
+            if (!cfg) {
+              cfg = {
+                sig: cfgSig,
+                heroes: (s.me.heroes || []).slice(),
+                troopSig: s.me.troopSig || '',
+                formation: s.me.formation || '',
+                n: 0, win: 0, draw: 0, lastTs: 0
+              };
+              pc.configs.set(cfgSig, cfg);
+            }
+            cfg.n++;
+            if (b.result === 'draw') cfg.draw++;
+            else if (won) cfg.win++;
+            if (b.ts && b.ts > cfg.lastTs) cfg.lastTs = b.ts;
           }
         }
       });
@@ -142,6 +422,17 @@ window.AC = window.AC || {};
         p.rate = (p.win + p.draw * 0.5) / (p.n || 1);
         p.exchange = p.costIn > 0 ? p.costOut / p.costIn : null;
         p.comps = Array.from(p.comps.values()).sort(function (x, y) { return y.n - x.n; });
+        p.comps.forEach(function (pc) {
+          pc.rate = (pc.win + pc.draw * 0.5) / (pc.n || 1);
+          pc.configList = Array.from(pc.configs.values())
+            .sort(function (x, y) { return y.n - x.n || y.lastTs - x.lastTs; });
+          pc.configList.forEach(function (cfg) {
+            cfg.rate = (cfg.win + cfg.draw * 0.5) / (cfg.n || 1);
+            const reds = (cfg.heroes || []).map(function (h) { return h.red; })
+              .filter(function (v) { return v !== null && v !== undefined; });
+            cfg.redAvg = reds.length ? reds.reduce(function (a, b) { return a + b; }, 0) / reds.length : null;
+          });
+        });
       });
 
       // 阵容集中度：top1 占比 + 赫芬达尔指数（越大越容易被针对）
@@ -373,35 +664,82 @@ window.AC = window.AC || {};
       const main = ally.compList[0];
       const concentrated = ally.top1Share >= 0.5;
       const broad = top.coverage >= 0.6;
-      let text, cls = '';
+      let cls = '';
+
+      // 拼装工具：T 普通文字 / hl 强调数字 / comp 阵容名 / line 一行
+      const T = function (s) { return U.el('span', { text: s }); };
+      const hl = function (s, c) { return U.el('span', { class: c, text: s }); };
+      const comp = function (s) { return U.el('span', { class: 'ac-comp', text: '「' + s + '」' }); };
+      const line = function (children) { return U.el('div', { class: 'ac-line' }, children); };
+      const parts = [];
 
       if (top.expRate < 0.5) {
         cls = ' warn';
-        text = '现有数据里没有哪套阵容能稳定压住这个同盟——在能评估的场次里表现最好的「' + top.display +
-          '」也只有 ' + U.fmtPct(top.expRate) + '，低于五五开。建议不要正面硬拼，或者把他们的对局样本补多一些再看。';
+        parts.push(line([
+          T('现有样本里，'),
+          hl('没有哪套阵容能稳定压住这个同盟', 'ac-warn'),
+          T('——能评估的场次中，表现最好的 '),
+          comp(top.display),
+          T(' 也只有 '),
+          hl(U.fmtPct(top.expRate), 'ac-bad'),
+          T('，低于五五开。')
+        ]));
+        parts.push(line([
+          T('建议：'),
+          hl('不要正面硬拼', 'ac-warn'),
+          T('，先把他们的对局样本补多一些再看。')
+        ]));
       } else if (broad) {
-        text = '该同盟 ' + U.fmtPct(main.share, 0) + ' 的出场集中在「' + main.display + '」' +
-          (concentrated ? '，打法固定、容易被针对。' : '。') +
-          '推荐用「' + top.display + '」应对：在它能对上的 ' + U.fmtPct(top.coverage, 0) +
-          ' 出场里胜率 ' + U.fmtPct(top.expRate) + '（累计交手 ' + top.evidence + ' 场）。';
-        // 关键：推荐要考虑它的克星，不能只报喜
+        parts.push(line([
+          T('重心：'),
+          hl(U.fmtPct(main.share, 0), 'ac-strong'),
+          T(' 的出场集中在 '),
+          comp(main.display),
+          concentrated ? hl('，打法固定、容易被针对。', 'ac-note') : T('。')
+        ]));
+        parts.push(line([
+          T('推荐：'),
+          comp(top.display),
+          T(' 能对上其 '),
+          hl(U.fmtPct(top.coverage, 0), 'ac-strong'),
+          T(' 的出场，胜率 '),
+          hl(U.fmtPct(top.expRate), 'ac-good'),
+          hl('（累计交手 ' + top.evidence + ' 场）', 'ac-dim')
+        ]));
         if (top.risks && top.risks.length) {
-          text += '但别硬顶——' + top.risks.slice(0, 2).map(function (r) {
-            return '他们的「' + r.comp + '」占其 ' + U.fmtPct(r.share, 0) +
-              ' 出场，这套打它只有 ' + U.fmtPct(r.rate, 0);
-          }).join('；') + '，遇到要避开或换阵。';
+          parts.push(line([hl('注意：', 'ac-warn'), T('这套也有打不动的对手，遇到请避开或换阵——')]));
+          top.risks.slice(0, 2).forEach(function (r) {
+            parts.push(line([
+              hl('·', 'ac-warn'),
+              comp(r.comp),
+              T('占其 '),
+              hl(U.fmtPct(r.share, 0) + ' 出场', 'ac-dim'),
+              T('，这套打它只有 '),
+              hl(U.fmtPct(r.rate, 0), 'ac-bad')
+            ]));
+          });
         }
       } else {
         cls = ' warn';
-        text = '该同盟阵容分散（最常用的一套也只占 ' + U.fmtPct(main.share, 0) + '），' +
-          '没有哪一套阵容能吃下大部分场面——覆盖面最广的「' + top.display + '」也只对得上其 ' +
-          U.fmtPct(top.coverage, 0) + ' 的出场。建议按下方「针对其主流队伍的单点克制」逐套准备。';
+        parts.push(line([
+          T('这个同盟阵容很分散：最常用的一套也只占 '),
+          hl(U.fmtPct(main.share, 0), 'ac-strong'),
+          T('，'),
+          hl('没有哪套能吃下大部分场面', 'ac-warn'),
+          T('。')
+        ]));
+        parts.push(line([
+          T('覆盖面最广的 '),
+          comp(top.display),
+          T(' 也只对得上其 '),
+          hl(U.fmtPct(top.coverage, 0), 'ac-note'),
+          T(' 的出场。')
+        ]));
+        parts.push(line([T('建议按下方'), hl('「针对其主流队伍的单点克制」', 'ac-note'), T('逐套准备。')]));
       }
 
-      host.appendChild(U.el('div', { class: 'ally-conclusion' + cls }, [
-        U.el('b', { text: '结论：' }),
-        U.el('span', { text: text })
-      ]));
+      host.appendChild(U.el('div', { class: 'ally-conclusion' + cls },
+        [U.el('b', { class: 'ac-title', text: '结论' })].concat(parts)));
     }
 
     /* ---- 指标卡 ---- */
@@ -435,7 +773,17 @@ window.AC = window.AC || {};
         U.el('div', { class: 'at-comp' }, [
           p.comps.length
             ? U.compWithTroop(p.comps[0].display, p.comps[0].troopSig || (result.nodeMap.get(p.comps[0].key) || {}).troopSig)
-            : U.el('span', { text: '-' })
+            : U.el('span', { text: '-' }),
+          p.comps.length
+            ? U.el('button', {
+              class: 'at-detail', text: '详情',
+              title: '查看这套阵容的完整配置（技能 / 兵书 / 装备 / 战马）；同一套阵容换过配置会分别列出',
+              onclick: function (e) {
+                e.stopPropagation();
+                openCompConfig(p.name, p, p.comps[0]);
+              }
+            })
+            : null
         ])
       ]));
     });
@@ -660,4 +1008,67 @@ window.AC = window.AC || {};
 
   AC.AllianceView = AllianceView;
   AC.allianceAnalysis = { build: build, counterAdvice: counterAdvice, bestAgainst: bestAgainst };
+  AC.openCompConfig = openCompConfig;   // 便于调试与分享
+  AC.openSideConfig = openSideConfig;   // 供玩家页的战报浮层复用（单场一方的配置）
+
+  /** 阵型站位图鉴（调试 / 核对站位用）：把已录入的阵型各画一遍 */
+  function previewFormations() {
+    const mask = U.el('div', { class: 'bl-mask' });
+    const panel = U.el('div', { class: 'bl-panel hc-panel' });
+    const body = U.el('div', { class: 'hc-body' });
+    function close() { mask.remove(); document.removeEventListener('keydown', onKey); }
+    function onKey(e) { if (e.key === 'Escape') close(); }
+
+    Object.keys(FORMATIONS).forEach(function (name) {
+      const fm = FORMATIONS[name];
+      const box = U.el('div', { class: 'hc-cfg' });
+      box.appendChild(U.el('div', { class: 'hc-cfg-head' }, [
+        U.el('span', { class: 'hc-cfg-rank', text: name }),
+        U.el('span', { class: 'hc-cfg-n', text: fm.note })
+      ]));
+      const board = U.el('div', { class: 'fm-board' });
+      [[1, '前排'], [2, '后排']].forEach(function (lane) {
+        const slots = fm.slots.filter(function (s) { return s.r === lane[0]; });
+        const wrap = U.el('div', { class: 'fm-lane' + (slots.length ? '' : ' empty') }, [
+          U.el('div', { class: 'fm-lane-t', text: lane[1] + '（' + slots.length + ' 人）' })
+        ]);
+        const grid = U.el('div', { class: 'fm-slots' });
+        slots.forEach(function (s) {
+          grid.appendChild(U.el('div', {
+            class: 'fm-slot filled',
+            style: { gridColumn: String(s.c) }
+          }, [
+            U.el('div', { class: 'fm-demo', text: '武将' + (fm.slots.indexOf(s) + 1) })
+          ]));
+        });
+        wrap.appendChild(grid);
+        board.appendChild(wrap);
+      });
+      box.appendChild(board);
+      body.appendChild(box);
+    });
+
+    panel.appendChild(U.el('div', { class: 'bl-title' }, [
+      U.el('div', { class: 'bl-title-l' }, [U.el('b', { text: '阵型站位表（' + Object.keys(FORMATIONS).length + ' 种）' })]),
+      U.el('button', { class: 'bl-close', text: '×', title: '关闭（Esc）', onclick: close })
+    ]));
+    panel.appendChild(body);
+    mask.appendChild(panel);
+    mask.addEventListener('click', function (e) { if (e.target === mask) close(); });
+    document.body.appendChild(mask);
+    document.addEventListener('keydown', onKey);
+  }
+  AC.previewFormations = previewFormations;
+
+  // URL 带 #cfg 时自动打开第一个玩家的阵容配置浮层
+  if (location.hash === '#cfg') {
+    setTimeout(function () {
+      const btn = document.querySelector('.at-detail');
+      if (btn) btn.click();
+    }, 800);
+  }
+  // URL 带 #fm 时打开阵型站位表
+  if (location.hash === '#fm') {
+    setTimeout(previewFormations, 800);
+  }
 })(window.AC);

@@ -542,4 +542,5 @@ window.AC = window.AC || {};
 
   AC.HeroesView = HeroesView;
   AC.heroAnalysis = { build: build, parseSkill: parseSkill };
+  AC.heroIcon = heroIconNode;      // 供其它视图（如同盟的阵容配置浮层）复用武将卡面
 })(window.AC);

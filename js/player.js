@@ -257,14 +257,24 @@ window.AC = window.AC || {};
       return wrap;
     }
 
-    function sideLine(tag, side, isWinner) {
+    function sideLine(tag, side, isWinner, battle) {
       return U.el('div', { class: 'bl-side' + (isWinner ? ' win' : '') }, [
         U.el('div', { class: 'bl-side-tag', text: tag }),
         U.el('div', { class: 'bl-side-info' }, [
           U.el('div', { class: 'bl-side-who' }, [
             U.el('span', { class: 'bl-side-player', text: side.player || '-' }),
             side.alliance ? U.el('span', { class: 'bl-side-ally', text: side.alliance }) : null,
-            U.el('span', { class: 'bl-side-troop', text: side.troopSig || '' })
+            U.el('span', { class: 'bl-side-troop', text: side.troopSig || '' }),
+            (AC.openSideConfig && side.heroes && side.heroes.length) ? U.el('button', {
+              class: 'bl-detail', text: '详情',
+              title: '查看这一方的完整配置（技能 / 兵书 / 装备 / 战马 / 阵型）',
+              onclick: function (e) {
+                e.stopPropagation();
+                AC.openSideConfig(side.player || '-', side, {
+                  sub: battle && battle.time ? String(battle.time).replace('T', ' ') : ''
+                });
+              }
+            }) : null
           ]),
           heroTags(side)
         ]),
@@ -301,8 +311,8 @@ window.AC = window.AC || {};
           U.el('span', { class: 'bl-role', text: x.role === 'atk' ? '攻方' : '守方' }),
           U.el('span', { class: 'bl-result', text: resultText })
         ]));
-        card.appendChild(sideLine('攻', x.me && x.role === 'atk' ? x.me : x.foe, x.result === 'atk'));
-        card.appendChild(sideLine('守', x.me && x.role === 'def' ? x.me : x.foe, x.result === 'def'));
+        card.appendChild(sideLine('攻', x.me && x.role === 'atk' ? x.me : x.foe, x.result === 'atk', x));
+        card.appendChild(sideLine('守', x.me && x.role === 'def' ? x.me : x.foe, x.result === 'def', x));
         card.appendChild(U.el('div', { class: 'bl-foot' }, [
           U.el('span', { text: '伤 ' + U.fmtInt((x.me && x.me.wounded) || 0) + ' / 亡 ' + U.fmtInt((x.me && x.me.dead) || 0) }),
           U.el('span', { text: '我方 ' + (x.role === 'atk' ? '攻方' : '守方') })
@@ -657,4 +667,18 @@ window.AC = window.AC || {};
 
   AC.PlayerView = PlayerView;
   AC.playerAnalysis = { build: build, heroSnapshots: heroSnapshots, HOUR_BANDS: HOUR_BANDS, hourBandOf: hourBandOf };
+
+  // URL 带 #log 打开首个阵容的战报浮层；带 #side 再自动点开第一个「详情」（便于验证与分享）
+  if (location.hash === '#log' || location.hash === '#side') {
+    setTimeout(function () {
+      const logBtn = document.querySelector('.pc-log');
+      if (!logBtn) return;
+      logBtn.click();
+      if (location.hash !== '#side') return;
+      setTimeout(function () {
+        const d = document.querySelector('.bl-detail');
+        if (d) d.click();
+      }, 700);
+    }, 1000);
+  }
 })(window.AC);

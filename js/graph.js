@@ -229,10 +229,11 @@ window.AC = window.AC || {};
       }
 
       if (self.rotating) {
-        // 3D：拖拽空白 = 旋转视角
+        // 3D：拖拽空白 = 旋转视角（以按下时的角度为基准，手感稳定）
         const nx = self.rotating.x, ny = self.rotating.y;
         self.yaw = self.rotating.yaw + (sx - nx) * 0.008;
-        self.pitch = U.clamp(self.rotating.pitch + (sy - ny) * 0.0065, -1.35, 1.35);
+        // 俯仰限制在 ±1.5 弧度（约 ±86°）：够看到接近正上/正下，又不触及万向节死锁
+        self.pitch = U.clamp(self.rotating.pitch + (sy - ny) * 0.0065, -1.5, 1.5);
         return;
       }
       if (self.dragNode) {
@@ -274,17 +275,26 @@ window.AC = window.AC || {};
       self._hideTip();
     });
 
+    // 右键用于拖动画布，屏蔽浏览器右键菜单
+    cv.addEventListener('contextmenu', function (ev) { ev.preventDefault(); });
+
     cv.addEventListener('mousedown', function (ev) {
       const rect = cv.getBoundingClientRect();
       const sx = ev.clientX - rect.left, sy = ev.clientY - rect.top;
       self.pressAt = { x: sx, y: sy, moved: false };
       self._hideTip();          // 一按下就先收起提示面板
 
-      // 3D：按下即进入旋转——节点上也可以，方便随时转视角；
+      // 3D：左键拖动 = 旋转视角（节点上也可以，方便随时转视角）；
+      //     右键拖动 = 平移整个画布
       // 想选中节点就单击（拖动超过阈值就不算点击了，见 click 处理）
       if (self.threeD) {
-        self.rotating = { x: sx, y: sy, yaw: self.yaw, pitch: self.pitch };
-        cv.style.cursor = 'move';
+        if (ev.button === 2) {
+          self.panning = { x: sx, y: sy };
+          cv.style.cursor = 'grabbing';
+        } else {
+          self.rotating = { x: sx, y: sy, yaw: self.yaw, pitch: self.pitch };
+          cv.style.cursor = 'move';
+        }
         return;
       }
 
@@ -325,7 +335,7 @@ window.AC = window.AC || {};
     });
 
     cv.addEventListener('dblclick', function () {
-      if (self.threeD) { self.yaw = 0.62; self.pitch = 0.42; self.view.k = 1; }
+      if (self.threeD) { self.yaw = 0.62; self.pitch = 0.42; self.view.k = 1; self.view.x = 0; self.view.y = 0; }
       else self.view = { x: 0, y: 0, k: 1 };
       self.relayout();
     });
@@ -536,8 +546,9 @@ window.AC = window.AC || {};
       const z2 = wy * sp + z1 * cp;
 
       const persp = fov / Math.max(120, fov + z2);
-      n.px = cw + x1 * persp * view.k;
-      n.py = ch + y1 * persp * view.k;
+      // 叠上 view.x / view.y：右键拖动的「平移整个画布」在 3D 下同样生效
+      n.px = cw + x1 * persp * view.k + view.x;
+      n.py = ch + y1 * persp * view.k + view.y;
       n.ps = persp * view.k;
       n.depth = z2;
       if (z2 < minD) minD = z2;
@@ -574,8 +585,90 @@ window.AC = window.AC || {};
     if (this.showParticles) this._drawParticles(ctx, focus, dt);
     this._drawNodes(ctx, focus);
     if (this.showLabels) this._drawLabels(ctx, focus);
+    if (this.threeD) this._drawViewCube(ctx);
 
     requestAnimationFrame(this._frame);
+  };
+
+  /**
+   * 右上角的方向指示器（ViewCube）。
+   * 用与主视图完全相同的 yaw / pitch 画一个小立方体：转到哪、翻了多少，一眼能看出来。
+   * 三个轴向的面各给一个色系（X 蓝 / Y 绿 / Z 紫），朝向观众的面上色更实。
+   */
+  Graph.prototype._drawViewCube = function (ctx) {
+    const size = 40;
+    const h = size / 2;
+    const cx = this.w - h - 24;
+    const cy = h + 24;
+
+    const cyaw = Math.cos(this.yaw), syaw = Math.sin(this.yaw);
+    const cpit = Math.cos(this.pitch), spit = Math.sin(this.pitch);
+
+    // 单位立方体的 8 个顶点
+    const V = [
+      [-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
+      [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]
+    ];
+    const P = V.map(function (v) {
+      const x1 = v[0] * cyaw - v[2] * syaw;
+      const z1 = v[0] * syaw + v[2] * cyaw;
+      const y1 = v[1] * cpit - z1 * spit;
+      const z2 = v[1] * spit + z1 * cpit;
+      // 与主视图同一套投影（屏幕 y 向下）
+      return { x: cx + x1 * h, y: cy + y1 * h, z: z2 };
+    });
+
+    // 六个面：顶点按外法线方向排列
+    const FACES = [
+      { idx: [1, 2, 6, 5], n: [1, 0, 0], on: 'rgba(78,168,255,.50)', off: 'rgba(78,168,255,.10)' },
+      { idx: [0, 4, 7, 3], n: [-1, 0, 0], on: 'rgba(78,168,255,.24)', off: 'rgba(78,168,255,.05)' },
+      { idx: [2, 3, 7, 6], n: [0, 1, 0], on: 'rgba(53,196,107,.50)', off: 'rgba(53,196,107,.10)' },
+      { idx: [0, 1, 5, 4], n: [0, -1, 0], on: 'rgba(53,196,107,.24)', off: 'rgba(53,196,107,.05)' },
+      { idx: [4, 5, 6, 7], n: [0, 0, 1], on: 'rgba(124,92,255,.55)', off: 'rgba(124,92,255,.10)' },
+      { idx: [0, 3, 2, 1], n: [0, 0, -1], on: 'rgba(124,92,255,.24)', off: 'rgba(124,92,255,.05)' }
+    ];
+    // 法线旋转后的 z 分量：小于 0 表示这个面朝向观众
+    const nz = function (n) {
+      const z1 = n[0] * syaw + n[2] * cyaw;
+      return n[1] * spit + z1 * cpit;
+    };
+
+    const list = FACES.map(function (f) {
+      const z = nz(f.n);
+      return { f: f, z: z, vis: z < 0 };
+    }).sort(function (a, b) { return a.z - b.z; });   // 远的先画
+
+    ctx.save();
+    // 底板
+    ctx.beginPath();
+    ctx.arc(cx, cy, h + 11, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(8,14,26,.55)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(78,168,255,.20)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    list.forEach(function (it) {
+      ctx.beginPath();
+      it.f.idx.forEach(function (vi, k) {
+        const p = P[vi];
+        if (k === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
+      });
+      ctx.closePath();
+      ctx.fillStyle = it.vis ? it.f.on : it.f.off;
+      ctx.fill();
+      ctx.strokeStyle = it.vis ? 'rgba(150,200,255,.55)' : 'rgba(120,150,190,.20)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    });
+
+    // 底座上的「左 / 右」小字，便于对方向
+    ctx.font = '9px system-ui, sans-serif';
+    ctx.fillStyle = 'rgba(140,170,210,.55)';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('指向', cx, cy + h + 22);
+    ctx.restore();
   };
 
   /** 计算高亮集合：选中/悬停的节点及其邻居 */

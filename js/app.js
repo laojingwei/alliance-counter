@@ -104,6 +104,60 @@ window.AC = window.AC || {};
       onLayoutChange: function () { updateFoot(); }
     });
 
+    // URL 带 #g3d 直接切到 3D（便于查看 / 分享）；#dragtest 额外做拖动自检
+    if (location.hash === '#g3d') {
+      setTimeout(function () {
+        const b = document.querySelector('#graphModeSeg .seg-btn[data-mode="3d"]');
+        if (b) b.click();
+      }, 1000);
+    }
+
+    // 验证用：URL 带 #dragtest 时切到 3D，模拟右键拖动，把位移写进标题
+    if (location.hash === '#dragtest') {
+      setTimeout(function () {
+        const b = document.querySelector('#graphModeSeg .seg-btn[data-mode="3d"]');
+        if (b) b.click();
+        setTimeout(function () {
+          const cv = $('#graphCanvas');
+          if (!cv) { document.title = 'DRAGTEST no-canvas'; return; }
+          const r = cv.getBoundingClientRect();
+          const fire = function (type, x, y, button) {
+            cv.dispatchEvent(new MouseEvent(type, {
+              clientX: r.left + x, clientY: r.top + y, button: button, bubbles: true, cancelable: true
+            }));
+          };
+          const before = { x: graph.view.x, y: graph.view.y, yaw: graph.yaw };
+          // 右键拖动：应当只平移画布，不改变 yaw/pitch
+          fire('mousedown', 300, 300, 2);
+          fire('mousemove', 350, 330, 2);
+          fire('mousemove', 400, 360, 2);
+          window.dispatchEvent(new MouseEvent('mouseup', { button: 2, bubbles: true }));
+          const afterPan = { x: graph.view.x, y: graph.view.y, yaw: graph.yaw };
+          // 左键拖动：应当只旋转视角，不改变 view.x/y
+          fire('mousedown', 300, 300, 0);
+          fire('mousemove', 360, 300, 0);
+          window.dispatchEvent(new MouseEvent('mouseup', { button: 0, bubbles: true }));
+          document.title = 'DRAGTEST pan=(' + (afterPan.x - before.x) + ',' + (afterPan.y - before.y) +
+            ') panYawDelta=' + (afterPan.yaw - before.yaw).toFixed(4) +
+            ' rotYawDelta=' + (graph.yaw - afterPan.yaw).toFixed(4) +
+            ' rotViewXDelta=' + (graph.view.x - afterPan.x).toFixed(2);
+
+          // 俯仰翻滚测试：连续向下拖 5 次共 500px，看 pitch 是否折返、yaw 是否持续累加
+          const y0 = graph.yaw, p0 = graph.pitch;
+          let maxAbsPitch = 0;
+          for (let i = 0; i < 5; i++) {
+            fire('mousedown', 300, 200 + i * 40, 0);
+            fire('mousemove', 300, 300 + i * 40, 0);
+            window.dispatchEvent(new MouseEvent('mouseup', { button: 0, bubbles: true }));
+            maxAbsPitch = Math.max(maxAbsPitch, Math.abs(graph.pitch));
+          }
+          document.title += ' || PITCH p0=' + p0.toFixed(2) + ' p1=' + graph.pitch.toFixed(2) +
+            ' maxAbs=' + maxAbsPitch.toFixed(2) + ' limit=' + (Math.PI / 2).toFixed(2) +
+            ' yawDelta=' + (graph.yaw - y0).toFixed(2) + ' (PI=' + Math.PI.toFixed(2) + ')';
+
+        }, 700);
+      }, 1200);
+    }
     graph.showLabels = filters.showLabels;
     graph.showParticles = filters.showParticles;
 
@@ -118,7 +172,7 @@ window.AC = window.AC || {};
         const hint = $('#graphModeHint');
         if (hint) {
           hint.textContent = mode === '3d'
-            ? '拖空白处旋转 · 滚轮缩放 · 高度 = 净压制力'
+            ? '左键拖动旋转视角 · 右键拖动平移画布 · 滚轮缩放 · 高度 = 净压制力'
             : '2D 更适合看清克制关系';
         }
       });
@@ -1188,7 +1242,7 @@ window.AC = window.AC || {};
 
   /* ================= 版本与缓存自检 ================= */
 
-  const BUILD = '202610112216a';
+  const BUILD = '202610120039a';
 
   /**
    * 仓库改动后浏览器可能仍用缓存的旧 js/css，导致新功能（如兵种徽章）不显示。
