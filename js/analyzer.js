@@ -241,6 +241,9 @@ window.AC = window.AC || {};
       p.lossLo = p.originLo ? p.costLo / p.originLo : null;
       p.lossHi = p.originHi ? p.costHi / p.originHi : null;
       p.lossGap = (p.lossHi !== null && p.lossLo !== null) ? p.lossHi - p.lossLo : null; // > 0 表示 lo 打得更省
+      // 平均开战兵力：看清双方是以多少兵力交手的
+      p.avgOriginLo = p.n ? p.originLo / p.n : 0;
+      p.avgOriginHi = p.n ? p.originHi / p.n : 0;
       p.nHiAsAtk = p.n - p.nLoAsAtk;
       p.winLoRateAsAtk = p.nLoAsAtk ? p.winLoAsAtk / p.nLoAsAtk : null;
       p.winLoRateAsDef = p.nLoAsDef ? p.winLoAsDef / p.nLoAsDef : null;
@@ -381,6 +384,7 @@ window.AC = window.AC || {};
     getPair: getPair,
     battlesOf: battlesOf,
     pairKeyOf: pairKeyOf,
+    pairSampleOk: pairSampleOk,
     DEFAULT_OPTS: DEFAULT_OPTS
   };
 })(window.AC);

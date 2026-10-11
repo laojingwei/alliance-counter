@@ -30,16 +30,24 @@ window.AC = window.AC || {};
     { key: 'atkF', title: '攻方阵型', fmt: function (b) { return b.atk.formation || '-'; } },
     { key: 'atkC', title: '攻方阵容（兵种）', fmt: function (b) { return withTroop(b.atk); } },
     { key: 'atkL', title: '等级', fmt: function (b) { return b.atk.levels.length ? b.atk.levels.join('/') : '-'; } },
+    { key: 'atkF2', title: '攻方兵力(开→余)', fmt: function (b) { return forceText(b.atk); } },
     { key: 'atkRD', title: '攻方红度/品级', fmt: function (b) { return redPin(b.atk); } },
     { key: 'atkCost', title: '攻方伤/亡', fmt: function (b) { return U.fmtInt(b.atk.wounded) + ' / ' + U.fmtInt(b.atk.dead); } },
     { key: 'def', title: '守方同盟 / 玩家', fmt: function (b) { return (b.def.alliance || '-') + ' · ' + (b.def.player || '-'); } },
     { key: 'defF', title: '守方阵型', fmt: function (b) { return b.def.formation || '-'; } },
     { key: 'defC', title: '守方阵容（兵种）', fmt: function (b) { return withTroop(b.def); } },
     { key: 'defL', title: '等级', fmt: function (b) { return b.def.levels.length ? b.def.levels.join('/') : '-'; } },
+    { key: 'defF2', title: '守方兵力(开→余)', fmt: function (b) { return forceText(b.def); } },
     { key: 'defRD', title: '守方红度/品级', fmt: function (b) { return redPin(b.def); } },
     { key: 'defCost', title: '守方伤/亡', fmt: function (b) { return U.fmtInt(b.def.wounded) + ' / ' + U.fmtInt(b.def.dead); } },
     { key: 'round', title: '回合', fmt: function (b) { return b.round === null ? '-' : b.round; } }
   ];
+
+  /** 兵力文本：开战 → 剩余 */
+  function forceText(side) {
+    if (!side.origin) return '-';
+    return U.fmtInt(side.origin) + ' → ' + U.fmtInt(side.remain || 0);
+  }
 
   /** 阵容 + 兵种（战报表格里用括号形式，紧凑） */
   function withTroop(side) {

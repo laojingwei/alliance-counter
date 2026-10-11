@@ -37,7 +37,7 @@ window.AC = window.AC || {};
 
   const state = { view: 'graph', result: null, selection: null };
 
-  let graph = null, matrix = null, rank = null, table = null, allianceView = null, heroesView = null;
+  let graph = null, matrix = null, rank = null, table = null, allianceView = null, heroesView = null, mirrorView = null, gearView = null, playerView = null;
 
   /* ================= 初始化 ================= */
 
@@ -70,7 +70,12 @@ window.AC = window.AC || {};
       }
     });
 
-    matrix = new AC.Matrix($('#matrixCanvas'), {
+      // 内战分析：唯一能控制「阵容」变量的场景，专门看配置差异的影响。
+  // 数据源用 store.battles —— 主分析默认排除了内战，这里必须拿全量。
+  mirrorView = new AC.MirrorView($('#mirrorList'), $('#mirrorDetail'));
+  gearView = new AC.GearView($('#gearWrap'));
+  playerView = new AC.PlayerView($('#playerList'), $('#playerDetail'), {});
+  matrix = new AC.Matrix($('#matrixCanvas'), {
       onHover: showMatrixTip,
       onSelect: function (sel) {
         const p = sel.pair;
@@ -252,7 +257,7 @@ window.AC = window.AC || {};
       genState.source = ev.target.value;
       renderGenPreview();
     });
-    ['#genAnon', '#genAnonId', '#genAnonPlace'].forEach(function (sel) {
+    ['#genAnon', '#genAnonId', '#genAnonPlace', '#genValidOnly'].forEach(function (sel) {
       $(sel).addEventListener('change', renderGenPreview);
     });
     $('#genDownloadJs').addEventListener('click', downloadGenJs);
@@ -518,8 +523,34 @@ window.AC = window.AC || {};
   }
 
   /** 战斗记录 -> 标准列 -> 脱敏 -> CSV 文本 / sample-data.js 文本 */
+  /**
+   * 导出内置数据时用的「有效性」规则：只剔除残缺 / 异常的记录。
+   * 注意：同阵容内战**保留**——那是对局事实，也能反映镜像对拼，
+   * 是否参与分析由分析时的「排除同名阵容内战」开关决定，不在导出阶段删数据。
+   */
+  const VALID_RULES = {
+    excludeMirror: false,  // 内战保留
+    onlyFull: true,        // 人数不满 3v3 或双方人数不等：残缺记录
+    minLevel: 30,          // 单位等级低于 30：明显是异常数据（默认分析门槛是 40，这里放宽以免误删）
+    minPair: 1,
+    minAppear: 1,
+    shrinkK: 3
+  };
+
   function computeConversion() {
-    const battles = collectSourceBattles(genState.source);
+    const source = collectSourceBattles(genState.source);
+    const keepValid = !$('#genValidOnly') || $('#genValidOnly').checked;
+
+    // 只保留有效对局：剔除残缺 / 异常记录（内战保留）
+    let battles = source;
+    const dropped = { mirror: 0, sample: 0 };
+    if (keepValid) {
+      battles = source.filter(function (b) {
+        if (!AC.analyzer.pairSampleOk(b.atk, b.def, VALID_RULES)) { dropped.sample++; return false; }
+        return true;
+      });
+    }
+
     // 明细数据要保持明细形态导出，否则武将 / 技能信息会被降级抹掉
     const detailed = AC.detail.hasDetail(battles);
     const header = detailed ? AC.detail.DETAIL_HEADER.slice() : AC.model.CSV_HEADER.slice();
@@ -542,7 +573,9 @@ window.AC = window.AC || {};
 
     genState.result = {
       battles: battles, header: header, rows: rows,
-      applied: applied, csv: csv, js: js, plan: plan, opts: opts
+      applied: applied, csv: csv, js: js, plan: plan, opts: opts,
+
+      sourceCount: source.length, validOnly: keepValid, dropped: dropped
     };
     return genState.result;
   }
@@ -582,7 +615,8 @@ window.AC = window.AC || {};
       ['数据规模', AC.detail.hasDetail(r.battles)
         ? (r.applied.rows.length + ' 行武将明细 / ' + r.battles.length + ' 场战斗')
         : (r.applied.rows.length + ' 场战斗')],
-      ['数据来源', sourceLabel(genState.source)],
+      ['有效对局', r.validOnly === false ? ('保留全部 ' + (r.sourceCount || 0) + ' 场') : ((r.sourceCount || 0) + ' 场 → 保留 ' + r.battles.length + ' 场' + (r.dropped && r.dropped.sample ? '（剔除异常 ' + r.dropped.sample + ' 场，内战保留）' : '（无可剔除）'))],
+        ['数据来源', sourceLabel(genState.source)],
       ['不同玩家', r.plan.stats.players + ' 个'],
       ['不同同盟', r.plan.stats.alliances + ' 个'],
       ['脱敏替换', r.opts.anonNames
@@ -662,6 +696,10 @@ window.AC = window.AC || {};
     rank.render(r);
     if (allianceView) allianceView.render(r);
     if (heroesView) heroesView.render(r);
+    // 内战分析不跟着主分析的过滤走，直接吃原始战报
+    if (mirrorView) mirrorView.render(store.battles);
+    if (gearView) gearView.render(store.battles);
+    if (playerView) playerView.render(r);
     table.setData(r.battles);
     updateStats(r, withAnim);
 
@@ -900,7 +938,9 @@ window.AC = window.AC || {};
       cell(nameA + ' 胜率', U.fmtPct(rateA)),
       cell('平均回合', p.avgRound.toFixed(1)),
       cell('损失率 A / B', U.fmtPct(p.lossLo, 0) + ' / ' + U.fmtPct(p.lossHi, 0)),
-      cell('战损优势', p.lossGap === null ? '-' : U.fmtSigned(p.lossGap, 1))
+      cell('战损优势', p.lossGap === null ? '-' : U.fmtSigned(p.lossGap, 1)),
+        cell('平均开战兵力', U.fmtShort(p.avgOriginLo || 0) + ' / ' + U.fmtShort(p.avgOriginHi || 0)),
+        cell('兵力对比', (p.avgOriginHi ? (p.avgOriginLo / p.avgOriginHi).toFixed(2) + ' : 1' : '-'))
     ]));
 
     // 攻守拆分
@@ -985,10 +1025,23 @@ window.AC = window.AC || {};
       ]),
       sideRow('atk', b.atk, atkWon),
       sideRow('def', b.def, defWon),
+      U.el('div', { class: 'bm-force' }, [
+        U.el('span', { class: 'bm-force-k', text: '开战兵力' }),
+        U.el('span', { class: 'bm-force-v', text: '攻 ' + U.fmtInt(b.atk.origin) + ' → ' + U.fmtInt(b.atk.remain) + lossTag(b.atk) }),
+        U.el('span', { class: 'bm-force-v', text: '守 ' + U.fmtInt(b.def.origin) + ' → ' + U.fmtInt(b.def.remain) + lossTag(b.def) })
+      ]),
       U.el('div', { class: 'bm-meta', text: '伤/亡  攻 ' + U.fmtInt(b.atk.wounded) + '/' + U.fmtInt(b.atk.dead) + '   守 ' + U.fmtInt(b.def.wounded) + '/' + U.fmtInt(b.def.dead) }),
       (b.atk.redDist || b.atk.pinDist) ? U.el('div', { class: 'bm-meta', text: '红度/品级  攻 ' + rp(b.atk) + '   守 ' + rp(b.def) }) : null
     ]);
     return node;
+  }
+
+  /** 损失率标签，如「（-39%）」；没有开战兵力时返回空串 */
+  function lossTag(side) {
+    if (!side.origin) return '';
+    const loss = side.origin - (side.remain || 0);
+    const pct = loss / side.origin;
+    return '（' + (pct >= 0 ? '-' : '+') + (pct * 100).toFixed(0) + '%）';
   }
 
   /** 红度/品级串，如 1·1·0 / 1·0·0 */
@@ -1076,7 +1129,7 @@ window.AC = window.AC || {};
 
   /* ================= 版本与缓存自检 ================= */
 
-  const BUILD = '20261011j';
+  const BUILD = '20261011z';
 
   /**
    * 仓库改动后浏览器可能仍用缓存的旧 js/css，导致新功能（如兵种徽章）不显示。
@@ -1127,6 +1180,9 @@ window.AC = window.AC || {};
     matrixRef: function () { return matrix; },
     allianceRef: function () { return allianceView; },
     heroesRef: function () { return heroesView; },
+    mirrorRef: function () { return mirrorView; },
+    gearRef: function () { return gearView; },
+    playerRef: function () { return playerView; },
     build: BUILD
   };
 

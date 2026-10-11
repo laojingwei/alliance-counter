@@ -8,7 +8,7 @@
 <meta http-equiv="Pragma" content="no-cache" />
 <meta http-equiv="Expires" content="0" />
 <title>xww-三国谋定天下：同盟对战 · 阵容克制关系图</title>
-<link rel="stylesheet" href="css/style.css?v=20261011j" />
+<link rel="stylesheet" href="css/style.css?v=20261011z" />
 </head>
 <body data-repo="https://github.com/laojingwei/alliance-counter">
 
@@ -158,6 +158,9 @@
       <button class="tab" data-view="rank">强度排行</button>
       <button class="tab" data-view="alliance">同盟分析</button>
       <button class="tab" data-view="heroes">武将分析</button>
+      <button class="tab" data-view="mirror">内战分析</button>
+      <button class="tab" data-view="gear">装备兵书</button>
+      <button class="tab" data-view="players">玩家分析</button>
       <button class="tab" data-view="table">原始战报</button>
       <div class="tabs-spacer"></div>
       <div class="legend" id="legend"></div>
@@ -200,6 +203,24 @@
         <div class="ally-wrap">
           <aside class="ally-list" id="heroList"></aside>
           <div class="ally-detail" id="heroDetail"></div>
+        </div>
+      </div>
+
+      <div class="view" id="view-mirror">
+        <div class="ally-wrap">
+          <aside class="ally-list" id="mirrorList"></aside>
+          <div class="ally-detail" id="mirrorDetail"></div>
+        </div>
+      </div>
+
+      <div class="view" id="view-gear">
+        <div class="gear-wrap" id="gearWrap"></div>
+      </div>
+
+      <div class="view" id="view-players">
+        <div class="ally-wrap">
+          <aside class="ally-list" id="playerList"></aside>
+          <div class="ally-detail" id="playerDetail"></div>
         </div>
       </div>
 
@@ -250,6 +271,8 @@
 
     <section class="block">
       <h2 class="block-title">2 · 脱敏设置</h2>
+      <label class="check"><input type="checkbox" id="genValidOnly" checked /> 只保留有效对局（推荐，能显著减小内置数据体积）</label>
+      <p class="hint" id="genValidHint">只剔除「人数不足」和「单位等级过低」的异常记录。<b>同阵容内战会保留</b>——那是对局事实，是否参与分析由分析时的开关决定，不在导出阶段删数据。</p>
       <label class="check"><input type="checkbox" id="genAnon" checked /> 脱敏同盟名与玩家名（强烈建议保持开启）</label>
       <label class="check"><input type="checkbox" id="genAnonId" /> 同时替换战斗Key里的数字 ID</label>
       <label class="check"><input type="checkbox" id="genAnonPlace" /> 同时替换地点坐标</label>
@@ -276,21 +299,24 @@
 <input type="file" id="fileInput" accept=".csv,.txt" multiple hidden />
 <input type="file" id="jsonInput" accept=".json" hidden />
 
-<script src="js/util.js?v=20261011j"></script>
-<script src="js/csv.js?v=20261011j"></script>
-<script src="js/model.js?v=20261011j"></script>
-<script src="js/detail.js?v=20261011j"></script>
-<script src="js/anonymize.js?v=20261011j"></script>
-<script src="js/store.js?v=20261011j"></script>
-<script src="js/analyzer.js?v=20261011j"></script>
-<script src="js/graph.js?v=20261011j"></script>
-<script src="js/matrix.js?v=20261011j"></script>
-<script src="js/rank.js?v=20261011j"></script>
-<script src="js/table.js?v=20261011j"></script>
-<script src="js/alliance.js?v=20261011j"></script>
-<script src="js/heroes.js?v=20261011j"></script>
-<script src="js/sample-data.js?v=20261011j"></script>
-<script src="js/update.js?v=20261011j"></script>
-<script src="js/app.js?v=20261011j"></script>
+<script src="js/util.js?v=20261011z"></script>
+<script src="js/csv.js?v=20261011z"></script>
+<script src="js/model.js?v=20261011z"></script>
+<script src="js/detail.js?v=20261011z"></script>
+<script src="js/anonymize.js?v=20261011z"></script>
+<script src="js/store.js?v=20261011z"></script>
+<script src="js/analyzer.js?v=20261011z"></script>
+<script src="js/graph.js?v=20261011z"></script>
+<script src="js/matrix.js?v=20261011z"></script>
+<script src="js/rank.js?v=20261011z"></script>
+<script src="js/table.js?v=20261011z"></script>
+<script src="js/alliance.js?v=20261011z"></script>
+<script src="js/heroes.js?v=20261011z"></script>
+<script src="js/mirror.js?v=20261011z"></script>
+<script src="js/gear.js?v=20261011z"></script>
+<script src="js/player.js?v=20261011z"></script>
+<script src="js/sample-data.js?v=20261011z"></script>
+<script src="js/update.js?v=20261011z"></script>
+<script src="js/app.js?v=20261011z"></script>
 </body>
 </html>

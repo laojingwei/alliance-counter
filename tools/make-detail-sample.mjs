@@ -15,7 +15,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const sandbox = { window: {}, console, TextDecoder };
 sandbox.globalThis = sandbox;
 vm.createContext(sandbox);
-for (const f of ['js/util.js', 'js/csv.js', 'js/model.js', 'js/detail.js', 'js/anonymize.js']) {
+for (const f of ['js/util.js', 'js/csv.js', 'js/model.js', 'js/detail.js', 'js/anonymize.js', 'js/analyzer.js']) {
   vm.runInContext(fs.readFileSync(path.join(here, '..', f), 'utf8'), sandbox, { filename: f });
 }
 const AC = sandbox.window.AC;
@@ -30,8 +30,32 @@ if (!inFile || !outCsv || !outJs) {
 const KEEP = AC.detail.DETAIL_HEADER;
 
 const text = fs.readFileSync(inFile, 'utf8').replace(/^\uFEFF/, '');
-const d = AC.detail.parse(text);
+let d = AC.detail.parse(text);
 if (!d) { console.error('这不是明细表格式'); process.exit(2); }
+
+/* 只保留「有效对局」，和网页端「生成内置数据」用的是同一套规则。
+   剔除的对局在任何分析里都会被排除（内战没有克制方向、人数不足/等级过低是异常记录），
+   留着只会白占内置数据的体积。加 --keep-all 可以跳过这一步。 */
+const keepAll = process.argv.includes('--keep-all');
+const VALID_RULES = {
+  excludeMirror: false, onlyFull: true, minLevel: 30,
+  minPair: 1, minAppear: 1, shrinkK: 3
+};
+if (!keepAll) {
+  const kept = [];
+  let mirror = 0, bad = 0;
+  d.battles.forEach((b) => {
+
+    if (!AC.analyzer.pairSampleOk(b.atk, b.def, VALID_RULES)) { bad++; return; }
+    kept.push(b);
+  });
+  const keepIds = new Set(kept.map((b) => b.id));
+  const keptRows = d.rows.filter((r) => keepIds.has(String(r['战斗编号'] || '').trim()));
+  console.log('有效对局：' + d.battles.length + ' 场 -> 保留 ' + kept.length + ' 场' +
+    '（剔除内战 ' + mirror + ' 场 / 异常记录 ' + bad + ' 场），明细行 ' +
+    d.rows.length + ' -> ' + keptRows.length);
+  d = { ...d, battles: kept, rows: keptRows };
+}
 
 const headerIdx = d.header.map((h) => String(h).trim());
 const cols = KEEP.filter((c) => headerIdx.indexOf(c) >= 0);

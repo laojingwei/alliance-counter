@@ -51,6 +51,36 @@ window.AC = window.AC || {};
   }
 
   /** 一行明细 -> 一个武将 */
+  /* 「装备属性原始 / 战马属性原始」形如 might=9|intelligence=7.6|effect=49|skill=58，
+     其中 might / intelligence / speed 是真实属性值，effect / skill 是特技特效 ID。
+     逐列填的「装备武力」等只覆盖部分属性，这里按 KV 解析能把整套属性补全。 */
+  const ATTR_KEY = {
+    might: 0,        // 武力
+    intelligence: 1, // 智力
+    command: 2,      // 统率
+    leadership: 2,   // 统率（别名）
+    speed: 3         // 速度 / 先攻
+  };
+
+  function parseAttrRaw(raw) {
+    const out = [null, null, null, null];   // 武力 / 智力 / 统率 / 速度
+    const extra = {};                        // 其它 KV（effect / skill 等 ID）
+    if (!raw) return { attrs: out, extra: extra };
+    String(raw).split('|').forEach(function (part) {
+      const i = part.indexOf('=');
+      if (i < 0) return;
+      const k = part.slice(0, i).trim();
+      const v = part.slice(i + 1).trim();
+      if (ATTR_KEY[k] !== undefined) {
+        const n = Number(v);
+        if (!isNaN(n)) out[ATTR_KEY[k]] = n;
+      } else if (v !== '') {
+        extra[k] = v;
+      }
+    });
+    return { attrs: out, extra: extra };
+  }
+
   function heroFromRow(r) {
     // 技能 / 兵书 保留槽位（空串占位），这样能和「技能N品」一一对应
     const skills = [r['技能1'], r['技能2'], r['技能3']]
@@ -73,16 +103,28 @@ window.AC = window.AC || {};
       equip: r['装备名'] ? String(r['装备名']).trim() : '',
       equipSkill: r['装备特技'] ? String(r['装备特技']).trim() : '',
       equipEffect: r['装备特效'] ? String(r['装备特效']).trim() : '',
-      equipAttrs: [num(r['装备武力']), num(r['装备智力']), num(r['装备统率']), num(r['装备速度'])],
+      equipAttrs: mergeAttrs([num(r['装备武力']), num(r['装备智力']), num(r['装备统率']), num(r['装备速度'])], parseAttrRaw(r['装备属性原始']).attrs),
+      equipAttrExtra: parseAttrRaw(r['装备属性原始']).extra,
       horse: r['战马名'] ? String(r['战马名']).trim() : '',
       horseSkill: r['战马特技'] ? String(r['战马特技']).trim() : '',
       horseEffect: r['战马特效'] ? String(r['战马特效']).trim() : '',
-      horseAttrs: [num(r['战马武力']), num(r['战马智力']), num(r['战马统率']), num(r['战马速度'])],
+      horseAttrs: mergeAttrs([num(r['战马武力']), num(r['战马智力']), num(r['战马统率']), num(r['战马速度'])], parseAttrRaw(r['战马属性原始']).attrs),
+      horseAttrExtra: parseAttrRaw(r['战马属性原始']).extra,
       origin: num(r['武将原始兵力']),
       remain: num(r['武将剩余兵力']),
       wounded: num(r['武将伤兵']),
       dead: num(r['武将阵亡'])
     };
+  }
+
+  /** 逐列属性优先，为空的位置用「属性原始」里的 KV 补上 */
+  function mergeAttrs(byCol, byRaw) {
+    const out = [null, null, null, null];
+    for (let i = 0; i < 4; i++) {
+      out[i] = (byCol[i] !== null && byCol[i] !== undefined) ? byCol[i]
+        : ((byRaw[i] !== null && byRaw[i] !== undefined) ? byRaw[i] : null);
+    }
+    return out;
   }
 
   /** 同一方的多行 -> 一支部队 */
@@ -150,7 +192,22 @@ window.AC = window.AC || {};
       pinMax: distOf('pin').length ? Math.max.apply(null, distOf('pin')) : null,
       pinDist: distOf('pin'),
       awakenAvg: avgOf('awaken'),
-      awakenSum: heroes.reduce(function (a, h) { return a + (h.awaken || 0); }, 0)
+      awakenSum: heroes.reduce(function (a, h) { return a + (h.awaken || 0); }, 0),
+        // 部队级状态与资源（新版明细表新增）
+        morale: num(r0['士气']),
+        wagonOrigin: num(r0['辎重原始']),
+        wagonNow: num(r0['辎重当前']),
+        troopExp: num(r0['部队经验']),
+        externalBuff: r0['外部增益'] ? String(r0['外部增益']).trim() : '',
+        externalBuffSource: r0['外部增益来源'] ? String(r0['外部增益来源']).trim() : '',
+        externalBuffLevel: num(r0['外部增益等级']),
+        shipType: num(r0['战船类型']),
+        seasonParts: r0['赛季组件'] ? String(r0['赛季组件']).trim() : '',
+        vehicleType: num(r0['载具类型']),
+        recruit: num(r0['征召数']),
+        merit: num(r0['武勋']),
+        stamina: num(r0['消耗体力']),
+        troopMix: heroes.reduce(function (acc, h) { if (h.troop && acc.indexOf(h.troop) < 0) acc.push(h.troop); return acc; }, []).join('/')
     };
   }
 
