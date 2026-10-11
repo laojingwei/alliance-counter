@@ -10,7 +10,8 @@ window.AC = window.AC || {};
   const $ = U.$;
   const $$ = U.$$;
 
-  const store = new AC.Store().load();
+  // 启动时不自动恢复上次存档：默认展示内置数据（旧存档会先备份，可用「载入上次数据」找回）
+  const store = new AC.Store();
 
   const filters = {
     dimension: 'comp',
@@ -127,9 +128,20 @@ window.AC = window.AC || {};
     renderBatches();
     recompute(true);
 
-    // 演示模式：index.html?demo=1[&view=matrix] 自动载入内置示例表
+    // 默认展示内置数据；?restore=1 时改为载入上次存档。
+    // 载入内置前先把上次存档挪到备份键，避免覆盖用户的数据。
     const params = new URLSearchParams(location.search);
-    if (params.get('demo') === '1' && AC.sampleCsv) {
+    if (params.get('restore') === '1') {
+      const r = store.restorePrev();
+      if (r.ok) {
+        renderBatches();
+        recompute(true);
+        U.toast('已载入上次的数据：' + r.n + ' 场 / ' + r.batches + ' 份表。');
+      } else {
+        U.toast('没有找到上次的数据。', 'warn');
+      }
+    } else if (AC.sampleCsv) {
+      store.stash();
       ingest(AC.sampleCsv, '示例战报表（内置）', true);
     }
     if (params.get('view')) switchView(params.get('view'));
@@ -243,6 +255,18 @@ window.AC = window.AC || {};
       recompute(true);
       U.toast('已清空全部数据。');
     });
+
+    const btnPrev = $('#btnLoadPrev');
+    if (btnPrev) {
+      btnPrev.addEventListener('click', function () {
+        if (!store.hasPrev()) { U.toast('没有找到上次的数据。', 'warn'); return; }
+        const r = store.restorePrev();
+        if (!r.ok) { U.toast('上次的数据无法恢复。', 'err'); return; }
+        renderBatches();
+        recompute(true);
+        U.toast('已载入上次的数据：' + r.n + ' 场 / ' + r.batches + ' 份表。');
+      });
+    }
 
     $('#btnLoadSample').addEventListener('click', function () {
       if (!AC.sampleCsv) { U.toast('未找到示例数据文件。', 'err'); return; }
@@ -699,7 +723,7 @@ window.AC = window.AC || {};
     // 内战分析不跟着主分析的过滤走，直接吃原始战报
     if (mirrorView) mirrorView.render(store.battles);
     if (gearView) gearView.render(store.battles);
-    if (playerView) playerView.render(r);
+    if (playerView) playerView.render(r, store.battles);
     table.setData(r.battles);
     updateStats(r, withAnim);
 
@@ -846,9 +870,15 @@ window.AC = window.AC || {};
   }
 
   function mixSection(title, obj, total) {
-    const entries = Object.keys(obj).map(function (k) { return { k: k, v: obj[k] }; })
-      .sort(function (a, b) { return b.v - a.v; }).slice(0, 5);
-    const sec = U.el('div', { class: 'insp-section' }, [U.el('h4', { text: title })]);
+    const LIMIT = 5;
+    const allKeys = Object.keys(obj);
+    // 与「克制的对手」保持一致：条数超过显示上限时，标题里说明总共有多少
+    const head = allKeys.length > LIMIT
+      ? title + '（共 ' + allKeys.length + '，显示前 ' + LIMIT + '）'
+      : title + '（共 ' + allKeys.length + '）';
+    const entries = allKeys.map(function (k) { return { k: k, v: obj[k] }; })
+      .sort(function (a, b) { return b.v - a.v; }).slice(0, LIMIT);
+    const sec = U.el('div', { class: 'insp-section' }, [U.el('h4', { text: head })]);
     entries.forEach(function (e) {
       const pct = e.v / total;
       sec.appendChild(U.el('div', { class: 'vs-row', style: { cursor: 'default' } }, [
@@ -861,25 +891,54 @@ window.AC = window.AC || {};
   }
 
   function matchList(title, list, positive) {
-    const sec = U.el('div', { class: 'insp-section' }, [U.el('h4', { text: title + '（' + list.length + '）' })]);
+    const LIMIT = 12;
+    const shown = list.slice(0, LIMIT);
+    // 标题写清总数与当前显示条数，避免「（50）却只看到十几个」的疑惑
+    const head = list.length > LIMIT
+      ? title + '（共 ' + list.length + '，显示前 ' + LIMIT + '）'
+      : title + '（共 ' + list.length + '）';
+    const sec = U.el('div', { class: 'insp-section' }, [U.el('h4', { text: head })]);
     if (!list.length) {
       sec.appendChild(U.el('div', { class: 'hint', text: '暂无显著样本' }));
       return sec;
     }
-    list.slice(0, 12).forEach(function (m) {
-      const row = U.el('div', { class: 'vs-row' }, [
-        U.el('div', { style: { flex: '1', minWidth: '0' } }, [
-          U.el('div', { class: 'vs-name' }, [U.compWithTroop(m.name, m.troopSig)]),
-          U.el('div', { class: 'mini-bar' }, [
-            U.el('i', { style: { width: (m.rate * 100).toFixed(0) + '%', background: U.rateColor(m.rate) } })
-          ])
-        ]),
-        U.el('span', { class: 'vs-rate', style: { color: positive ? '#ff8a9c' : '#6fc8ff' }, text: U.fmtPct(m.rate, 0) }),
-        U.el('span', { class: 'vs-n', text: m.n + '场' })
-      ]);
-      row.addEventListener('click', function () { selectNode(m.key); });
-      sec.appendChild(row);
-    });
+
+    const body = U.el('div', { class: 'vs-body' });
+    let expanded = false;
+
+    function renderRows(rows) {
+      body.innerHTML = '';
+      rows.forEach(function (m) {
+        const row = U.el('div', { class: 'vs-row' }, [
+          U.el('div', { style: { flex: '1', minWidth: '0' } }, [
+            U.el('div', { class: 'vs-name' }, [U.compWithTroop(m.name, m.troopSig)]),
+            U.el('div', { class: 'mini-bar' }, [
+              U.el('i', { style: { width: (m.rate * 100).toFixed(0) + '%', background: U.rateColor(m.rate) } })
+            ])
+          ]),
+          U.el('span', { class: 'vs-rate', style: { color: positive ? '#ff8a9c' : '#6fc8ff' }, text: U.fmtPct(m.rate, 0) }),
+          U.el('span', { class: 'vs-n', text: m.n + '场' })
+        ]);
+        row.addEventListener('click', function () { selectNode(m.key); });
+        body.appendChild(row);
+      });
+    }
+    renderRows(shown);
+    sec.appendChild(body);
+
+    if (list.length > LIMIT) {
+      const btn = U.el('button', { class: 'vs-more' });
+      const setLabel = function () {
+        btn.textContent = expanded ? '收起（只看前 ' + LIMIT + ' 个）' : '展开全部 ' + list.length + ' 个';
+      };
+      setLabel();
+      btn.addEventListener('click', function () {
+        expanded = !expanded;
+        renderRows(expanded ? list : shown);
+        setLabel();
+      });
+      sec.appendChild(btn);
+    }
     return sec;
   }
 
@@ -1129,7 +1188,7 @@ window.AC = window.AC || {};
 
   /* ================= 版本与缓存自检 ================= */
 
-  const BUILD = '20261011z';
+  const BUILD = '202610112216a';
 
   /**
    * 仓库改动后浏览器可能仍用缓存的旧 js/css，导致新功能（如兵种徽章）不显示。

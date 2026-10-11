@@ -75,7 +75,7 @@ window.AC = window.AC || {};
   }
 
   /** 玩家 -> 他常用队伍（含逐武将红度） */
-  function build(result) {
+  function build(result, allBattles) {
     const map = new Map();
 
     result.battles.forEach(function (b) {
@@ -86,7 +86,7 @@ window.AC = window.AC || {};
         let p = map.get(name);
         if (!p) {
           p = {
-            name: name, n: 0, wins: 0, draws: 0,
+            name: name, n: 0, wins: 0, losses: 0, draws: 0,
             alliances: new Map(), compMap: new Map(),
             redSum: 0, redN: 0,
             hourMap: new Map()   // 时段 -> 场次
@@ -96,6 +96,7 @@ window.AC = window.AC || {};
         p.n++;
         if (b.result === role) p.wins++;
         else if (b.result === 'draw') p.draws++;
+        else p.losses++;
         if (side.alliance) p.alliances.set(side.alliance, (p.alliances.get(side.alliance) || 0) + 1);
         const band = hourBandOf(b.ts);
         if (band) p.hourMap.set(band.key, (p.hourMap.get(band.key) || 0) + 1);
@@ -105,18 +106,36 @@ window.AC = window.AC || {};
         if (!c) {
           c = {
             key: key, display: side.display || side.compRaw || key, troopSig: side.troopSig || '',
-            n: 0, wins: 0, draws: 0, battles: []
+            n: 0, wins: 0, loss: 0, draws: 0,
+            batt: []            // 每场保留双方完整信息，供「战报」浮层展示
           };
           p.compMap.set(key, c);
         }
         c.n++;
         if (b.result === role) c.wins++;
         else if (b.result === 'draw') c.draws++;
-        c.battles.push(side);
+        else c.loss++;
+        c.batt.push({
+          id: b.id, time: b.time, ts: b.ts, place: b.place, round: b.round,
+          result: b.result, role: role,
+          me: side, foe: role === 'atk' ? b.def : b.atk
+        });
       });
     });
 
     const players = Array.from(map.values()).map(function (p) {
+      // 用全量数据算「被筛选条件排除了几场」，避免用户看到场次比自己实际打的少
+      const fullCount = new Map();
+      if (allBattles && allBattles.length) {
+        allBattles.forEach(function (b) {
+          [['atk', b.atk], ['def', b.def]].forEach(function (pair) {
+            const sd = pair[1];
+            if (!sd || sd.player !== p.name) return;
+            fullCount.set(sd.key, (fullCount.get(sd.key) || 0) + 1);
+          });
+        });
+      }
+
       const compList = Array.from(p.compMap.values())
         .sort(function (a, b) { return b.n - a.n; })
         .map(function (c) {
@@ -126,9 +145,13 @@ window.AC = window.AC || {};
             troopSig: c.troopSig,
             n: c.n,
             winLo: c.wins,
+            loss: c.loss,
             draw: c.draws,
             rate: c.n ? (c.wins + c.draws * 0.5) / c.n : 0.5,
-            heroes: heroSnapshots(c.battles)
+            heroes: heroSnapshots(c.batt.map(function (x) { return x.me; })),
+            // 该阵容在全量数据里的场次；比 n 大说明有对局被筛选条件排除
+            fullN: fullCount.get(c.key) || c.n,
+            batt: c.batt
           };
         });
       // 玩家整体红度（用于列表排序与概览）
@@ -140,6 +163,7 @@ window.AC = window.AC || {};
         name: p.name,
         n: p.n,
         wins: p.wins,
+        losses: p.losses,
         draws: p.draws,
         rate: p.n ? (p.wins + p.draws * 0.5) / p.n : 0.5,
         alliance: (function () {
@@ -196,14 +220,145 @@ window.AC = window.AC || {};
     return wrap;
   }
 
+  /* ---------------- 战报浮层 ----------------
+     展示某位玩家在某套阵容下的全部对战，样式参考游戏内战报：
+     时间 / 地点 / 回合 / 攻守 / 双方玩家与同盟 / 双方武将与红度 / 兵力 / 胜负。
+     对战多时按页切换。 */
+  const BATT_PER_PAGE = 10;
+
+  function openBattleLog(playerName, comp) {
+    const list = (comp.batt || []).slice().sort(function (a, b) { return (b.ts || 0) - (a.ts || 0); });
+    let page = 0;
+    const totalPages = Math.max(1, Math.ceil(list.length / BATT_PER_PAGE));
+
+    const mask = U.el('div', { class: 'bl-mask' });
+    const panel = U.el('div', { class: 'bl-panel' });
+    const body = U.el('div', { class: 'bl-body' });
+    const pager = U.el('div', { class: 'bl-pager' });
+
+    function close() {
+      mask.remove();
+      document.removeEventListener('keydown', onKey);
+    }
+    function onKey(e) { if (e.key === 'Escape') close(); }
+
+    function heroTags(side) {
+      const wrap = U.el('div', { class: 'bl-heroes' });
+      (side.heroes || []).forEach(function (h) {
+        const tag = U.el('span', { class: 'bl-hero' }, [
+          U.el('span', { class: 'bl-hero-n', text: h.name }),
+          h.troop ? U.troopBadge(h.troop) : null,
+          h.red === null || h.red === undefined ? null : U.el('span', {
+            class: 'bl-hero-red' + (h.red >= 3 ? ' hot' : ''), text: '红' + h.red
+          })
+        ]);
+        wrap.appendChild(tag);
+      });
+      return wrap;
+    }
+
+    function sideLine(tag, side, isWinner) {
+      return U.el('div', { class: 'bl-side' + (isWinner ? ' win' : '') }, [
+        U.el('div', { class: 'bl-side-tag', text: tag }),
+        U.el('div', { class: 'bl-side-info' }, [
+          U.el('div', { class: 'bl-side-who' }, [
+            U.el('span', { class: 'bl-side-player', text: side.player || '-' }),
+            side.alliance ? U.el('span', { class: 'bl-side-ally', text: side.alliance }) : null,
+            U.el('span', { class: 'bl-side-troop', text: side.troopSig || '' })
+          ]),
+          heroTags(side)
+        ]),
+        U.el('div', { class: 'bl-side-force' }, [
+          U.el('b', { text: U.fmtInt(side.origin || 0) }),
+          U.el('span', { class: 'bl-force-sep', text: ' / ' }),
+          U.el('span', { text: U.fmtInt(side.remain || 0) })
+        ])
+      ]);
+    }
+
+    function renderPage() {
+      body.innerHTML = '';
+      const slice = list.slice(page * BATT_PER_PAGE, (page + 1) * BATT_PER_PAGE);
+      if (!slice.length) {
+        body.appendChild(U.el('div', { class: 'hint', text: '这套阵容没有可展示的对战记录。' }));
+        return;
+      }
+      slice.forEach(function (x, i) {
+        const idx = page * BATT_PER_PAGE + i + 1;
+        const isDraw = x.result === 'draw';
+        const meWin = !isDraw && x.result === x.role;
+        const resultText = isDraw ? '平' : (meWin ? '胜' : '败');
+        const card = U.el('div', { class: 'bl-card' + (meWin ? ' is-win' : (isDraw ? ' is-draw' : ' is-loss')) });
+        // 中央大印章，仿游戏战报
+        card.appendChild(U.el('div', { class: 'bl-stamp', 'aria-hidden': 'true' }, [
+          U.el('b', { text: resultText })
+        ]));
+        card.appendChild(U.el('div', { class: 'bl-head' }, [
+          U.el('span', { class: 'bl-idx', text: '#' + idx }),
+          U.el('span', { class: 'bl-time', text: String(x.time || '').replace('T', ' ') }),
+          U.el('span', { class: 'bl-place', text: x.place || '' }),
+          U.el('span', { class: 'bl-round', text: (x.round || 0) + ' 回合' }),
+          U.el('span', { class: 'bl-role', text: x.role === 'atk' ? '攻方' : '守方' }),
+          U.el('span', { class: 'bl-result', text: resultText })
+        ]));
+        card.appendChild(sideLine('攻', x.me && x.role === 'atk' ? x.me : x.foe, x.result === 'atk'));
+        card.appendChild(sideLine('守', x.me && x.role === 'def' ? x.me : x.foe, x.result === 'def'));
+        card.appendChild(U.el('div', { class: 'bl-foot' }, [
+          U.el('span', { text: '伤 ' + U.fmtInt((x.me && x.me.wounded) || 0) + ' / 亡 ' + U.fmtInt((x.me && x.me.dead) || 0) }),
+          U.el('span', { text: '我方 ' + (x.role === 'atk' ? '攻方' : '守方') })
+        ]));
+        body.appendChild(card);
+      });
+    }
+
+    function renderPager() {
+      pager.innerHTML = '';
+      pager.appendChild(U.el('button', {
+        class: 'bl-btn', text: '上一页', disabled: page === 0 ? 'disabled' : null,
+        onclick: function () { if (page > 0) { page--; renderPage(); renderPager(); } }
+      }));
+      pager.appendChild(U.el('span', { class: 'bl-page', text: (page + 1) + ' / ' + totalPages + '  （共 ' + list.length + ' 场）' }));
+      pager.appendChild(U.el('button', {
+        class: 'bl-btn', text: '下一页', disabled: page >= totalPages - 1 ? 'disabled' : null,
+        onclick: function () { if (page < totalPages - 1) { page++; renderPage(); renderPager(); } }
+      }));
+    }
+
+    panel.appendChild(U.el('div', { class: 'bl-title' }, [
+      U.el('div', { class: 'bl-title-l' }, [
+        U.el('b', { text: playerName }),
+        U.el('span', { text: ' · ' }),
+        U.el('span', {}, [U.compWithTroop(comp.display, comp.troopSig)])
+      ]),
+      U.el('button', { class: 'bl-close', text: '×', title: '关闭（Esc）', onclick: close })
+    ]));
+    panel.appendChild(body);
+    panel.appendChild(pager);
+    mask.appendChild(panel);
+    mask.addEventListener('click', function (e) { if (e.target === mask) close(); });
+    document.body.appendChild(mask);
+    document.addEventListener('keydown', onKey);
+    renderPage();
+    renderPager();
+  }
+
   /** 一个阵容的武将红度表 */
-  function compCard(c) {
+  function compCard(c, playerName) {
     const box = U.el('div', { class: 'pc-box' });
     box.appendChild(U.el('div', { class: 'pc-head' }, [
       U.el('div', { class: 'pc-name' }, [U.compWithTroop(c.display, c.troopSig)]),
       U.el('div', { class: 'pc-meta' }, [
         U.el('span', { text: c.n + ' 场' }),
-        U.el('span', { style: { color: U.rateColor(c.rate) }, text: '胜率 ' + U.fmtPct(c.rate, 0) })
+        U.el('span', { class: 'pc-wl', text: c.winLo + ' 胜 ' + (c.loss || 0) + ' 负' + (c.draw ? ' ' + c.draw + ' 平' : '') }),
+        U.el('span', { style: { color: U.rateColor(c.rate) }, text: '胜率 ' + U.fmtPct(c.rate, 0) }),
+        (c.fullN && c.fullN > c.n)
+          ? U.el('span', { class: 'pc-more', title: '有对局被筛选条件排除，关闭「红度对等」等条件后可见', text: '另 ' + (c.fullN - c.n) + ' 场被筛选排除' })
+          : null,
+        U.el('button', {
+          class: 'pc-log', text: '战报',
+          title: '查看这套阵容的全部对战（含被筛选排除的）',
+          onclick: function (e) { e.stopPropagation(); openBattleLog(playerName, c); }
+        })
       ])
     ]));
 
@@ -220,7 +375,7 @@ window.AC = window.AC || {};
       box.appendChild(U.el('div', { class: 'pc-row' }, [
         U.el('div', { class: 'pc-hn' }, [
           U.el('span', { text: h.name }),
-          h.troop ? U.troopBadges(h.troop) : null
+          h.troop ? U.troopBadge(h.troop) : null
         ]),
         U.el('div', { class: 'pc-red' }, [
           redDots(h.red),
@@ -298,8 +453,9 @@ window.AC = window.AC || {};
     });
   };
 
-  PlayerView.prototype.render = function (result) {
+  PlayerView.prototype.render = function (result, allBattles) {
     this.result = result;
+    this.allBattles = allBattles;
     if (!result || !result.battles || !result.battles.length) {
       this.listHost.innerHTML = '';
       this.detailHost.innerHTML = '';
@@ -309,7 +465,7 @@ window.AC = window.AC || {};
       ]));
       return;
     }
-    this.data = build(result);
+    this.data = build(result, allBattles);
     if (!this.data.players.length) {
       this.listHost.innerHTML = '';
       this.detailHost.innerHTML = '';
@@ -447,21 +603,26 @@ window.AC = window.AC || {};
 
     host.appendChild(U.el('div', { class: 'ally-metrics' }, [
       metric('出场', p.n + ' 场'),
-      metric('胜率', U.fmtPct(p.rate), p.wins + ' 胜 / ' + p.draws + ' 平'),
+      metric('胜率', U.fmtPct(p.rate), p.wins + ' 胜 / ' + p.losses + ' 负 / ' + p.draws + ' 平'),
       metric('队伍数', p.compList.length + ' 套', '按出场次数排序'),
-      metric('平均红度', p.avgRed === null ? '-' : p.avgRed.toFixed(1), '该玩家全部武将')
+      metric('平均红度', p.avgRed === null ? '-' : p.avgRed.toFixed(1), '该玩家全部武将'),
+      metric('被筛选排除', (function () {
+        let hidden = 0;
+        p.compList.forEach(function (c) { hidden += Math.max(0, (c.fullN || c.n) - c.n); });
+        return hidden + ' 场';
+      })(), '放宽左侧筛选条件可看到')
     ]));
 
     /* ---- 各队伍的武将红度 ---- */
     const s1 = section('各队伍的武将红度', '每套队伍里具体是哪几名武将、红度 / 品级 / 等级 / 装备战马各是什么水平');
-    p.compList.slice(0, 8).forEach(function (c) { s1.appendChild(compCard(c)); });
+    p.compList.slice(0, 8).forEach(function (c) { s1.appendChild(compCard(c, p.name)); });
     if (p.compList.length > 8) {
       s1.appendChild(U.el('p', { class: 'hint', text: '（只列出前 8 套，共 ' + p.compList.length + ' 套）' }));
     }
     host.appendChild(s1);
 
     /* ---- 如何克制 ---- */
-    const s2 = section('如何克制他', '按他各队伍的出场频率加权，算出哪些阵容打他最有效；并提醒要小心他的哪些队伍');
+    const s2 = section('如何克制他', '按他各队伍的出场频率加权，算出哪些阵容打他最有效；「要小心」列出他常用、且能打赢该推荐的队伍（括号里是它对你的胜率，与队伍卡片上的总体胜率口径不同）');
     const ally = { name: p.name, n: p.n, compList: p.compList };
     const advice = AC.allianceAnalysis.counterAdvice(this.result, ally, {});
     if (!advice.length) {
@@ -478,11 +639,17 @@ window.AC = window.AC || {};
         if (a.reason) box.appendChild(U.el('div', { class: 'adv-reason', text: a.reason }));
         if (a.risks && a.risks.length) {
           box.appendChild(U.el('div', { class: 'adv-risks' }, [
-            U.el('span', { class: 'adv-risks-t', text: '要小心：' }),
-            U.el('span', { text: a.risks.map(function (r) { return r.comp + '（占其 ' + U.fmtPct(r.share, 0) + '，他只赢 ' + U.fmtPct(1 - r.rate, 0) + '）'; }).join('、') })
+            U.el('div', { class: 'adv-risks-t', text: '用它打他时，当心他这几套（他常出、而你打不过）：' }),
+            U.el('div', { class: 'risk-list' }, a.risks.slice(0, 3).map(function (r) {
+              return U.el('div', { class: 'risk-row' }, [
+                U.el('span', { class: 'risk-comp' }, [U.compWithTroop(r.comp, r.troopSig)]),
+                U.el('span', { class: 'risk-share', text: '他常用 ' + U.fmtPct(r.share, 0) }),
+                U.el('span', { class: 'risk-mine', style: { color: U.rateColor(r.rate) },
+                  text: '你对上胜率 ' + U.fmtPct(r.rate, 0) })
+              ]);
+            }))
           ]));
-        }
-        s2.appendChild(box);
+        }        s2.appendChild(box);
       });
     }
     host.appendChild(s2);

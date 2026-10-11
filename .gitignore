@@ -30,3 +30,8 @@ tools/shots/
 
 dist/
 
+
+# 编辑 CSV 时编辑器留下的备份
+*.csvbk
+*.csv.bak
+

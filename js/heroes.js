@@ -318,20 +318,82 @@ window.AC = window.AC || {};
     this.select(keep ? this.selected : this.data.heroes[0].name);
   };
 
+  /* ---------------- 武将卡面图标 ---------------- */
+
+  // 卡面素材目录：images/heroes/武将名.webp；找不到时退回 _default.webp
+  const ICON_BASE = 'images/heroes/';
+  const ICON_EXT = '.webp';
+  const ICON_DEFAULT = ICON_BASE + '_default' + ICON_EXT;
+  const iconMiss = Object.create(null);   // 记录确定缺失的武将名，避免重复请求
+
+  function heroIconFallback(name) {
+    const bare = String(name || '').replace(/^\s*sp[\s·_-]*/i, '').trim();
+    return U.el('div', {
+      class: 'hero-icon-ph',
+      title: name || '',
+      text: (bare || '?').charAt(0)
+    });
+  }
+
+  /** 武将名 -> 候选素材名；如 "SP诸葛亮" 先找 诸葛亮_2，再退回 诸葛亮 */
+  function iconFileCandidates(name) {
+    const n = String(name || '').trim();
+    if (!n) return [];
+    const m = /^sp[\s·_-]*(.+)$/i.exec(n);
+    if (m) {
+      const base = m[1].trim();
+      return base ? [base + '_2', base] : [];
+    }
+    return [n];
+  }
+
+  /**
+   * 卡面图标容器，三级兜底：候选素材 -> 通用默认卡面 -> 文字占位。
+   * 保证任何武将（含数据里有、卡池里没有的）都不会出现破图。
+   */
+  function heroIconNode(name, cls) {
+    const box = U.el('div', { class: cls });
+    const img = U.el('img', { alt: name || '', loading: 'lazy' });
+    const cands = iconMiss[name] ? [] : iconFileCandidates(name);
+    let i = 0;
+    let usedDefault = false;
+    const next = function () {
+      if (i < cands.length) {
+        img.src = ICON_BASE + encodeURIComponent(cands[i++]) + ICON_EXT;
+        return;
+      }
+      if (!usedDefault) {
+        usedDefault = true;
+        iconMiss[name] = true;
+        img.src = ICON_DEFAULT;
+        return;
+      }
+      box.innerHTML = '';
+      box.appendChild(heroIconFallback(name));
+    };
+    img.addEventListener('error', next);
+    next();
+    box.appendChild(img);
+    return box;
+  }
+
   HeroesView.prototype.renderList = function () {
     const self = this;
     this.listHost.innerHTML = '';
     this.data.heroes.forEach(function (h) {
-      const item = U.el('div', { class: 'ally-item', 'data-name': h.name }, [
-        U.el('div', { class: 'ai-top' }, [
-          U.el('div', { class: 'ai-name', title: h.name, text: h.name }),
-          U.el('div', { class: 'ai-rate', text: U.fmtPct(h.rate, 0) })
-        ]),
-        U.el('div', { class: 'ai-meta' }, [
-          U.el('span', { text: h.n + ' 场' + (h.redAvg !== null ? ' · 均红 ' + h.redAvg.toFixed(1) : '') }),
-          h.troopList.length ? U.troopBadge(h.troopList[0][0]) : null
-        ]),
-        bar(h.rate, U.rateColor(h.rate))
+      const item = U.el('div', { class: 'ally-item hero-item', 'data-name': h.name }, [
+        heroIconNode(h.name, 'hero-icon'),
+        U.el('div', { class: 'hero-body' }, [
+          U.el('div', { class: 'ai-top' }, [
+            U.el('div', { class: 'ai-name', title: h.name, text: h.name }),
+            U.el('div', { class: 'ai-rate', text: U.fmtPct(h.rate, 0) })
+          ]),
+          U.el('div', { class: 'ai-meta' }, [
+            U.el('span', { text: h.n + ' 场' + (h.redAvg !== null ? ' · 均红 ' + h.redAvg.toFixed(1) : '') }),
+            h.troopList.length ? U.troopBadge(h.troopList[0][0]) : null
+          ]),
+          bar(h.rate, U.rateColor(h.rate))
+        ])
       ]);
       item.addEventListener('click', function () { self.select(h.name); });
       self.listHost.appendChild(item);
@@ -353,12 +415,15 @@ window.AC = window.AC || {};
     const result = this.result;
     host.innerHTML = '';
 
-    host.appendChild(U.el('div', { class: 'ally-head' }, [
-      U.el('h2', { text: h.name }),
-      U.el('div', {
-        class: 'ally-head-meta',
-        text: h.n + ' 场出场 · 胜率 ' + U.fmtPct(h.rate) + (h.mainAlliance ? ' · 主要在 ' + h.mainAlliance : '')
-      })
+    host.appendChild(U.el('div', { class: 'ally-head hero-head' }, [
+      heroIconNode(h.name, 'hero-portrait'),
+      U.el('div', { class: 'hero-head-text' }, [
+        U.el('h2', { text: h.name }),
+        U.el('div', {
+          class: 'ally-head-meta',
+          text: h.n + ' 场出场 · 胜率 ' + U.fmtPct(h.rate) + (h.mainAlliance ? ' · 主要在 ' + h.mainAlliance : '')
+        })
+      ])
     ]));
 
     host.appendChild(U.el('div', { class: 'ally-metrics' }, [

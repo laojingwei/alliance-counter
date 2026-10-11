@@ -385,6 +385,8 @@ window.AC = window.AC || {};
     const out = {};
     // 金书（兵书）：一个武将带 3 本，逐本统计；基准用该武将的总体胜率
     const bookStat = { items: new Map(), base: { n: 0, win: 0, draw: 0 } };
+    // 技能：该武将带的技能（最多 3 个），逐技能统计；基准用其总体胜率
+    const skillStat = { items: new Map(), base: { n: 0, win: 0, draw: 0 } };
 
     TRAIT_SOURCES.forEach(function (src) {
       out[src.key] = { name: src.name, items: new Map(), none: { n: 0, win: 0, draw: 0 } };
@@ -404,6 +406,18 @@ window.AC = window.AC || {};
           if (!bk) return;
           let o = bookStat.items.get(bk);
           if (!o) { o = { n: 0, win: 0, draw: 0 }; bookStat.items.set(bk, o); }
+          o.n++; if (drew) o.draw++; else if (won) o.win++;
+        });
+
+        // 技能（同一技能占多槽位时每场只记一次）
+        skillStat.base.n++; if (drew) skillStat.base.draw++; else if (won) skillStat.base.win++;
+        const seenSkill = new Set();
+        (h.skills || []).forEach(function (sk) {
+          const nm = sk ? String(sk).replace(/\(Lv\d+\)$/, '').trim() : '';
+          if (!nm || seenSkill.has(nm)) return;
+          seenSkill.add(nm);
+          let o = skillStat.items.get(nm);
+          if (!o) { o = { n: 0, win: 0, draw: 0 }; skillStat.items.set(nm, o); }
           o.n++; if (drew) o.draw++; else if (won) o.win++;
         });
 
@@ -441,7 +455,27 @@ window.AC = window.AC || {};
         items: items
       };
     }).filter(function (x) { return x.items.length || x.noneN >= 5; })
-      .concat([buildBookDim(bookStat)]);
+      .concat([buildBookDim(bookStat), buildSkillDim(skillStat)]);
+  }
+
+  /** 技能维度：与该武将总体胜率对比（过滤掉几乎每场都带的技能） */
+  function buildSkillDim(skillStat) {
+    const baseRate = skillStat.base.n ? (skillStat.base.win + skillStat.base.draw * 0.5) / skillStat.base.n : null;
+    const items = Array.from(skillStat.items.entries()).map(function (e) {
+      const o = e[1];
+      const rate = o.n ? (o.win + o.draw * 0.5) / o.n : null;
+      return {
+        name: e[0], n: o.n, rate: rate,
+        delta: (rate !== null && baseRate !== null) ? rate - baseRate : null
+      };
+    })
+      .filter(function (x) { return x.n >= 5; })
+      .sort(function (a, b) { return b.rate - a.rate || b.n - a.n; });
+    return {
+      key: 'skills', name: '技能', isSkill: true,
+      noneN: skillStat.base.n, noneRate: baseRate,
+      items: items
+    };
   }
 
   /** 金书维度：与该武将总体胜率对比 */
@@ -517,12 +551,30 @@ window.AC = window.AC || {};
             name: name, n: 0,
             dimHit: new Map(),                 // 维度 -> {n, higherWin}
             equipAtk: new Map(), equipDef: new Map(),  // 该武将带某装备时的胜负
+            skillOnly: new Map(),                      // 技能对位：一方带、另一方不带
             horseAtk: new Map(), horseDef: new Map(),
             samples: []
           };
           byHero.set(name, rec);
         }
         rec.n++;
+
+        /* 技能对位：这名武将在 A 方带、B 方不带（或反过来）时，持有方赢了多少。
+           比「带它 vs 总体」更有意义 —— 后者因技能长期固定，差异几乎为零。 */
+        const skA = new Set((ha.skills || []).map(function (x) { return x ? String(x).replace(/\(Lv\d+\)$/, '').trim() : ''; }).filter(Boolean));
+        const skB = new Set((hb.skills || []).map(function (x) { return x ? String(x).replace(/\(Lv\d+\)$/, '').trim() : ''; }).filter(Boolean));
+        skA.forEach(function (nm) {
+          if (skB.has(nm)) return;
+          let o = rec.skillOnly.get(nm);
+          if (!o) { o = { n: 0, win: 0, draw: 0 }; rec.skillOnly.set(nm, o); }
+          o.n++; if (drew) o.draw++; else if (b.result === 'atk') o.win++;
+        });
+        skB.forEach(function (nm) {
+          if (skA.has(nm)) return;
+          let o = rec.skillOnly.get(nm);
+          if (!o) { o = { n: 0, win: 0, draw: 0 }; rec.skillOnly.set(nm, o); }
+          o.n++; if (drew) o.draw++; else if (b.result === 'def') o.win++;
+        });
 
         // 维度对比
         HERO_DIMS.forEach(function (d) {
@@ -588,6 +640,13 @@ window.AC = window.AC || {};
         valueDims: valueImpact(list, rec.name),
         // 该武将装备 / 战马的特技特效表现（与「无特技」基准对比）
         traitDims: heroTraitImpact(list, rec.name),
+        // 技能对位（比总体口径更有区分度）
+        skillPairs: Array.from(rec.skillOnly.entries()).map(function (e) {
+          const o = e[1];
+          const rate = o.n ? (o.win + o.draw * 0.5) / o.n : null;
+          return { name: e[0], n: o.n, rate: rate, gap: rate === null ? null : rate - 0.5 };
+        }).filter(function (x) { return x.n >= 3; })
+          .sort(function (a, b) { return b.gap - a.gap || b.n - a.n; }),
         equips: merge(rec.equipAtk, rec.equipDef),
         horses: merge(rec.horseAtk, rec.horseDef),
         samples: rec.samples
@@ -841,7 +900,7 @@ window.AC = window.AC || {};
             } else {
               const tb = U.el('div', { class: 'trait-table' });
               tb.appendChild(U.el('div', { class: 'trait-row trait-row-h' }, [
-                U.el('div', { text: td.name.slice(0, 2) }),
+                U.el('div', { text: td.name }),
                 U.el('div', { text: '样本' }),
                 U.el('div', { text: '胜率' }),
                 U.el('div', { text: '对比基准' })
@@ -863,6 +922,32 @@ window.AC = window.AC || {};
           });
           heroDetail.appendChild(tw);
         }
+        // 技能对位：同名武将在双方带不同技能时，谁的胜率高
+        if (hp.skillPairs && hp.skillPairs.length) {
+          heroDetail.appendChild(U.el('div', { class: 'gear-sub', text:
+            '技能对位（这名武将在某方带了它、另一方没带时，「带着它」的一方赢了多少）' }));
+          const sk = U.el('div', { class: 'ally-table hero-table' });
+          sk.appendChild(U.el('div', { class: 'ht-head' }, [
+            U.el('div', { text: '技能' }), U.el('div', { text: '样本' }),
+            U.el('div', { text: '持有方胜率' }), U.el('div', { text: '对比五五开' })
+          ]));
+          hp.skillPairs.slice(0, 10).forEach(function (x) {
+            sk.appendChild(U.el('div', { class: 'ht-row' }, [
+              U.el('div', { class: 'ht-name', title: x.name, text: x.name }),
+              U.el('div', { text: x.n + ' 场' }),
+              U.el('div', { style: { color: U.rateColor(x.rate) }, text: U.fmtPct(x.rate, 0) }),
+              U.el('div', {
+                class: 'trait-delta ' + (x.gap === null ? '' : (x.gap > 0.02 ? 'pos' : (x.gap < -0.02 ? 'neg' : ''))),
+                text: x.gap === null ? '-' : (x.gap >= 0 ? '+' : '') + (x.gap * 100).toFixed(0) + '%'
+              })
+            ]));
+          });
+          heroDetail.appendChild(sk);
+          heroDetail.appendChild(U.el('p', { class: 'hint', text:
+            '同一名武将技能长期固定，用「带它 vs 总体」看不出差别；这里改成对位口径：' +
+            '一方带了、另一方不带，才能反映这个技能在同等条件下的价值。' }));
+        }
+
         // 该武将带某件装备 / 某匹马时的胜率（样本通常很小，仅作参考）
         if (hp.equips.length || hp.horses.length) {
           heroDetail.appendChild(U.el('details', { class: 'val-more' }, [

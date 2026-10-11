@@ -11,6 +11,7 @@ window.AC = window.AC || {};
   const KEY = 'ac.battles.v3';
   const LEGACY_KEYS = ['ac.battles.v2', 'ac.battles.v1'];
   const VERSION = 3;
+  const PREV_KEY = KEY + '.prev';   // 上一次的存档备份（默认展示内置数据时保留）
 
   function Store() {
     this.battles = [];
@@ -120,6 +121,35 @@ window.AC = window.AC || {};
     this.battles.forEach(function (b) { this.byId.set(b.id, b); }, this);
     this.saveSoon();
     return before - this.battles.length;
+  };
+
+  /** 把当前存档挪到备份键（默认展示内置数据前调用，避免覆盖用户上次的数据） */
+  Store.prototype.stash = function () {
+    try {
+      var raw = localStorage.getItem(KEY);   // eslint-disable-line no-undef
+      if (raw) { localStorage.setItem(PREV_KEY, raw); return true; }
+    } catch (e) { /* ignore */ }
+    return false;
+  };
+
+  /** 是否存在可恢复的上次存档 */
+  Store.prototype.hasPrev = function () {
+    try { return !!localStorage.getItem(PREV_KEY); } catch (e) { return false; }
+  };
+
+  /** 载入上次存档（替换当前数据） */
+  Store.prototype.restorePrev = function () {
+    var raw = null;
+    try { raw = localStorage.getItem(PREV_KEY); } catch (e) { raw = null; }
+    if (!raw) return { ok: false, reason: "empty" };
+    var data = null;
+    try { data = JSON.parse(raw); } catch (e) { return { ok: false, reason: "parse" }; }
+    if (!data || !Array.isArray(data.battles)) return { ok: false, reason: "shape" };
+    this.battles = data.battles;
+    this.batches = data.batches || [];
+    this.byId = new Map(this.battles.map(function (b) { return [b.id, b]; }));
+    this.save();
+    return { ok: true, n: this.battles.length, batches: this.batches.length };
   };
 
   Store.prototype.clear = function () {

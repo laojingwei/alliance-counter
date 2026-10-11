@@ -510,6 +510,34 @@ canvas { display: block; width: 100%; height: 100%; }
 .ai-rate { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--text-dim); }
 .ai-meta { font-size: 11px; color: var(--text-faint); margin: 3px 0 5px; }
 
+/* ---------------- 武将卡面图标 ---------------- */
+/* 列表项：左侧卡面缩略图 + 右侧数据（只作用于武将列表，不影响其它 ally-list） */
+.hero-item { display: flex; gap: 9px; align-items: flex-start; }
+.hero-item .hero-icon {
+  width: 36px; height: 56px; flex: none; border-radius: 5px; overflow: hidden;
+  border: 1px solid var(--line-soft); background: rgba(10, 18, 34, .8);
+}
+.hero-item .hero-icon img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.hero-item .hero-body { flex: 1; min-width: 0; }
+
+/* 详情页头部：左侧大卡面 + 右侧标题/概要 */
+.hero-head { display: flex; gap: 14px; align-items: flex-start; }
+.hero-head .hero-portrait {
+  width: 92px; height: 142px; flex: none; border-radius: 8px; overflow: hidden;
+  border: 1px solid var(--line-soft); background: rgba(10, 18, 34, .8);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .35);
+}
+.hero-head .hero-portrait img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.hero-head-text { flex: 1; min-width: 0; }
+
+/* 素材缺失时的文字占位（不破坏布局） */
+.hero-icon-ph {
+  width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 600; color: var(--text-dim);
+  background: linear-gradient(160deg, rgba(78, 168, 255, .2), rgba(124, 92, 255, .14));
+}
+.hero-portrait .hero-icon-ph { font-size: 26px; }
+
 .ally-detail { overflow-y: auto; padding: 16px 18px 30px; }
 .ally-detail::-webkit-scrollbar { width: 9px; }
 .ally-detail::-webkit-scrollbar-thumb { background: #26334f; border-radius: 8px; }
@@ -915,8 +943,10 @@ canvas { display: block; width: 100%; height: 100%; }
 .trait-head b { font-size: 12px; color: #dbe7ff; }
 .trait-base { font-size: 10.5px; color: #7d90b0; }
 .trait-table { display: flex; flex-direction: column; }
-.trait-row { display: grid; grid-template-columns: 1fr 52px 50px 62px; align-items: center;
-  padding: 3px 4px; border-radius: 4px; font-size: 11.5px; }
+.trait-row { display: grid; grid-template-columns: minmax(0, 1fr) 44px 42px 58px; align-items: center;
+  column-gap: 4px; padding: 3px 2px; border-radius: 4px; font-size: 11.5px; }
+.trait-row-h { color: #5d6f8f; }
+.trait-row-h > div { overflow: visible; text-overflow: clip; }
 .trait-row:nth-child(odd) { background: rgba(255,255,255,0.02); }
 .trait-row-h { font-size: 10.5px; color: #5d6f8f; }
 .trait-name { color: #c7d6f0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -984,3 +1014,96 @@ details.fold > .fold-summary + * { margin-top: 0; }
   border: 1px solid #22304d; border-radius: 5px; padding: 4px 6px; font-size: 11.5px; outline: none; }
 .pf-select:focus, .pf-input:focus { border-color: #3b82f6; }
 .pf-count { flex: 1 1 100%; font-size: 11px; color: #7d90b0; padding-top: 2px; }
+/* 玩家队伍卡片的胜/负/平 */
+.pc-wl { color: #8fa3c4; font-variant-numeric: tabular-nums; }
+/* 被筛选排除的场次提示 */
+.pc-more { color: #e5a86b; font-size: 11px; }
+/* 战报浮层 */
+.bl-mask { position: fixed; inset: 0; background: rgba(4, 8, 16, 0.72); z-index: 200;
+  display: flex; align-items: center; justify-content: center; padding: 24px; }
+.bl-panel { width: min(960px, 100%); max-height: 90vh; display: flex; flex-direction: column;
+  background: #0b1424; border: 1px solid #22304d; border-radius: 12px; overflow: hidden;
+  box-shadow: 0 18px 48px rgba(0,0,0,0.55); }
+.bl-title { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 14px; border-bottom: 1px solid #1b2740; background: #0d1526; }
+.bl-title-l { font-size: 13.5px; color: #dbe7ff; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.bl-close { background: transparent; border: none; color: #7d90b0; font-size: 20px; line-height: 1;
+  cursor: pointer; padding: 2px 6px; border-radius: 4px; }
+.bl-close:hover { background: #1b2740; color: #dbe7ff; }
+.bl-body { overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 12px; }
+.bl-card { border: 1px solid #1e2a44; border-radius: 8px; background: #0d1526; }
+.bl-card.is-win { border-left: 3px solid #35c46b; }
+.bl-card.is-loss { border-left: 3px solid #e5656e; }
+.bl-card.is-draw { border-left: 3px solid #8fa3c4; }
+.bl-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 7px 10px; background: #101a2e; font-size: 11.5px; color: #8fa3c4; }
+.bl-idx { color: #5d6f8f; }
+.bl-time { color: #c7d6f0; font-variant-numeric: tabular-nums; }
+.bl-place { color: #7d90b0; }
+.bl-role { color: #7d90b0; }
+.bl-result { margin-left: auto; font-size: 14px; font-weight: 700; }
+.is-win .bl-result { color: #35c46b; }
+.is-loss .bl-result { color: #e5656e; }
+.is-draw .bl-result { color: #8fa3c4; }
+.bl-side { display: grid; grid-template-columns: 22px 1fr 118px; align-items: start; gap: 10px;
+  padding: 8px 10px 10px; border-top: 1px solid #16203a; }
+.bl-side-tag { padding-top: 2px; }
+.bl-side.win { background: rgba(53, 196, 107, 0.05); }
+.bl-side-tag { color: #5d6f8f; font-size: 11.5px; }
+.bl-side-info { min-width: 0; }
+.bl-side-who { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.bl-side-player { font-size: 12.5px; color: #dbe7ff; font-weight: 600; }
+.bl-side-ally { font-size: 11px; color: #7d90b0; }
+.bl-side-troop { font-size: 10.5px; color: #5d6f8f; letter-spacing: 1px; }
+.bl-heroes { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; min-height: 22px; }
+.bl-hero { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; border-radius: 4px;
+  background: #101a2e; border: 1px solid #1b2740; font-size: 11px; color: #c7d6f0; }
+.bl-hero-red { color: #8fa3c4; font-size: 10.5px; }
+.bl-hero-red.hot { color: #e5656e; }
+.bl-side-force { text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; color: #c7d6f0; white-space: nowrap; padding-top: 2px; }
+.bl-force-sep { color: #4a5a76; }
+.bl-foot { display: flex; gap: 16px; padding: 7px 10px 9px; font-size: 11px; color: #7d90b0; border-top: 1px dashed #16203a; margin-top: 2px; }
+.bl-pager { display: flex; align-items: center; justify-content: center; gap: 14px;
+  padding: 10px 14px; border-top: 1px solid #1b2740; background: #0d1526; }
+.bl-btn { background: #14243f; color: #c7d6f0; border: 1px solid #22304d; border-radius: 6px;
+  padding: 5px 14px; font-size: 12px; cursor: pointer; }
+.bl-btn:hover:not([disabled]) { border-color: #3b82f6; color: #fff; }
+.bl-btn[disabled] { opacity: 0.4; cursor: not-allowed; }
+.bl-page { font-size: 12px; color: #8fa3c4; font-variant-numeric: tabular-nums; }
+
+/* 队伍卡片上的「战报」按钮 */
+.pc-log { background: #14243f; color: #9db2d4; border: 1px solid #22304d; border-radius: 5px;
+  padding: 2px 10px; font-size: 11px; cursor: pointer; }
+.pc-log:hover { border-color: #3b82f6; color: #fff; }
+/* 卡片中央的结果印章（仿游戏战报） */
+.bl-card { position: relative; }
+.bl-stamp { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  pointer-events: none; z-index: 0; overflow: hidden; }
+.bl-stamp b { font-size: clamp(52px, 7vw, 82px); font-weight: 900; letter-spacing: 10px;
+  line-height: 1; padding: 8px 18px; border-radius: 12px;
+  transform: rotate(-9deg); opacity: 0.10;
+  text-shadow: 0 0 18px currentColor; }
+.bl-card.is-win .bl-stamp b { color: #e8c26a; opacity: 0.12; }
+.bl-card.is-loss .bl-stamp b { color: #e5656e; opacity: 0.11; }
+.bl-card.is-draw .bl-stamp b { color: #8fa3c4; opacity: 0.09; }
+/* 内容压到印章之上 */
+.bl-card > .bl-head, .bl-card > .bl-side, .bl-card > .bl-foot { position: relative; z-index: 1; }
+.bl-card > .bl-head { background: rgba(16, 26, 46, 0.86); }
+/* 武将对位里的技能表（4 列） */
+.hp-detail .ally-table .ht-head, .hp-detail .ally-table .ht-row {
+  grid-template-columns: minmax(0, 1fr) 44px 42px 58px;
+  column-gap: 4px;
+}
+/* 「要小心」清单：一行一条，避免三个数字挤在括号里 */
+.risk-list { margin-top: 5px; display: flex; flex-direction: column; gap: 4px; }
+.risk-row { display: grid; grid-template-columns: minmax(0, 1fr) 108px 130px; align-items: center;
+  gap: 10px; padding: 4px 8px; border-radius: 5px; background: rgba(229, 168, 107, 0.07);
+  border-left: 2px solid rgba(229, 168, 107, 0.5); font-size: 11.5px; }
+.risk-comp { color: #dbe7ff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.risk-share { color: #7d90b0; text-align: right; }
+.risk-mine { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+.adv-risks-t { margin-top: 6px; }
+/* 「克制的对手」展开按钮 */
+.vs-more { display: block; width: 100%; margin-top: 6px; padding: 4px 8px; font-size: 11px;
+  color: #8fa3c4; background: #101a2e; border: 1px dashed #22304d; border-radius: 5px; cursor: pointer; }
+.vs-more:hover { color: #dbe7ff; border-color: #3b82f6; }
