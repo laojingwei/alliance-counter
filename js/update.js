@@ -50,6 +50,11 @@ window.AC = window.AC || {};
 
   /** 依次尝试候选地址（Promise 链，保持与项目其它部分一致的兼容写法） */
   function fetchRemoteVersion() {
+    // 极旧浏览器 / 无 fetch 的环境（如某些内嵌 WebView、离线测试环境）：
+    // 直接走失败分支，而不是抛出一个逃过 Promise 链的未捕获异常
+    if (typeof fetch !== 'function') {
+      return Promise.reject(new Error('当前环境不支持网络请求（无 fetch）'));
+    }
     const urls = versionUrls();
     let lastErr = null;
 

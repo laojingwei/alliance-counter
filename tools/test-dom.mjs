@@ -409,6 +409,21 @@ items[1].dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
 const sw = w.document.querySelector('#allyDetail').textContent.length;
 console.log('点击列表切换同盟后详情仍正常:', sw > 200 ? 'PASS' : 'FAIL');
 
+// 主力玩家列表的「战报」按钮：复用玩家分析那套仿游戏战报卡浮层
+{
+  const logBtns = w.document.querySelectorAll('#allyDetail .at-log').length;
+  let ok = false, nCards = 0;
+  if (logBtns) {
+    w.document.querySelector('#allyDetail .at-log').click();
+    const m = w.document.querySelector('.bl-mask');
+    nCards = m ? m.querySelectorAll('.bl2-card').length : 0;
+    ok = !!m && nCards > 0;
+    const cb = m && m.querySelector('.bl-close');
+    if (cb) cb.click();
+  }
+  console.log('玩家行「战报」按钮:', logBtns, '个 | 点击打开战报浮层:', ok ? 'PASS' : 'FAIL', '| 卡片', nCards);
+}
+
 /* ---------- 武将 / 技能 / 装备分析 ---------- */
 console.log('\n=== 武将分析 ===');
 w.AC.app.switchView('heroes');
@@ -423,12 +438,14 @@ const missHero = heroSections.filter((t) => heroDetailText.indexOf(t) < 0);
 console.log('武将列表项:', heroItems, '| 详情区块齐全:', missHero.length === 0 ? 'PASS' : 'FAIL 缺少 ' + missHero.join('/'));
 
 // 出场累计必须等于原始武将行数
+// 口径对齐 heroes.js 的聚合端：无名武将行会被跳过，技能槽按「非空」计（明细表固定 3 槽，没带满是空串）
 let rawHeroRows = 0, rawSkillUses = 0;
 r2.battles.forEach((b) => {
   [b.atk, b.def].forEach((side) => {
     (side.heroes || []).forEach((h) => {
+      if (!h.name) return;
       rawHeroRows++;
-      rawSkillUses += (h.skills || []).length;
+      rawSkillUses += (h.skills || []).filter(Boolean).length;
     });
   });
 });
@@ -436,6 +453,9 @@ const sumHeroN = heroData.heroes.reduce((s, h) => s + h.n, 0);
 const sumSkillN = heroData.skills.reduce((s, x) => s + x.n, 0);
 console.log('武将出场累计一致:', sumHeroN === rawHeroRows ? 'PASS' : 'FAIL (' + sumHeroN + ' vs ' + rawHeroRows + ')',
   '| 技能携带累计一致:', sumSkillN === rawSkillUses ? 'PASS' : 'FAIL (' + sumSkillN + ' vs ' + rawSkillUses + ')');
+// 技能表里不该出现空名（空技能槽被解析成空技能就是 bug）
+const emptySkills = heroData.skills.filter((s) => !s.name).length;
+console.log('技能表无空名项:', emptySkills === 0 ? 'PASS' : 'FAIL (' + emptySkills + ' 项)');
 
 // 抽一个武将，绕开模块独立重算胜率
 const h0 = heroData.heroes[0];
@@ -586,6 +606,175 @@ console.log('\n=== 推荐的风险提示 ===');
   if (pair) {
     console.log('  对阵红度分层: 共', pair.byRedList.length, '档',
       pair.byRedList.map((x) => '红' + x.level + ':' + x.n + '场' + w.AC.util.fmtPct(x.rateLo, 0)).join(' '));
+  }
+}
+
+console.log('\n=== 玩家分析 ===');
+{
+  w.AC.app.switchView('players');
+  const items = w.document.querySelectorAll('#playerList .ally-item').length;
+  const txt = w.document.querySelector('#playerDetail').textContent;
+  const secs = ['各队伍的武将红度', '如何克制他', '针对他每套队伍的单点克制', '结论'];
+  const miss = secs.filter((t) => txt.indexOf(t) < 0);
+  console.log('玩家列表项:', items, '| 详情区块齐全:', miss.length === 0 ? 'PASS' : 'FAIL 缺少 ' + miss.join('/'));
+
+  const view = w.AC.app.playerRef();
+  const players = view.data.players;
+
+  // ① 平均红度：必须等于「按场次取 side.redAvg」的复算值（不再跨阵容重复累加武将）
+  const expRed = new Map();
+  view.result.battles.forEach((b) => [b.atk, b.def].forEach((sd) => {
+    if (!sd.player || sd.redAvg === null || sd.redAvg === undefined) return;
+    const o = expRed.get(sd.player) || { s: 0, n: 0 };
+    o.s += sd.redAvg; o.n++; expRed.set(sd.player, o);
+  }));
+  const redOk = players.every((p) => {
+    const e = expRed.get(p.name);
+    if (!e || !e.n) return p.avgRed === null;
+    return p.avgRed !== null && Math.abs(p.avgRed - e.s / e.n) < 1e-9;
+  });
+  console.log('avgRed 与「按场次独立复算」一致:', redOk ? 'PASS' : 'FAIL');
+
+  // ② 个人交手记录
+  const withPair = players.filter((p) => p.pairMap && p.pairMap.size > 0).length;
+  console.log('带个人交手记录的玩家:', withPair + ' / ' + players.length, withPair > 0 ? 'PASS' : 'FAIL');
+
+  // ③ 克制建议应优先用个人交手口径
+  const targetP = players.filter((p) => p.n >= 10 && p.pairMap && p.pairMap.size > 0)[0] || players[0];
+  view.select(targetP.name);
+  const advP = w.AC.allianceAnalysis.counterAdvice(view.result, targetP, { playerPairs: targetP.pairMap });
+  const srcMix = {};
+  advP.forEach((a) => (a.detail || []).forEach((d) => { srcMix[d.src] = (srcMix[d.src] || 0) + 1; }));
+  const usedPersonal = Object.keys(srcMix).some((k) => k !== 'global');
+  console.log('克制建议的口径分布:', JSON.stringify(srcMix), usedPersonal ? 'PASS' : '（该玩家的对局没有可融合的个人记录）');
+  // 个人记录不得被全局先验抹掉：有个人记录时 detail 必须标出个人场次
+  const pnOk = advP.every((a) => (a.detail || []).every((d) => d.src === 'global' || (d.pn > 0 && d.pn <= d.n)));
+  console.log('个人场次标注合理（0 < pn <= 全局场次）:', pnOk ? 'PASS' : 'FAIL');
+
+  // ④ 武将名搜索
+  const kw = w.document.querySelector('.pf-input');
+  const someHero = (targetP.compList[0].heroes[0] || {}).name;
+  kw.value = someHero;
+  kw.dispatchEvent(new w.Event('input'));
+  const hitN = w.document.querySelectorAll('#playerList .ally-item').length;
+  console.log('按武将名搜索「' + someHero + '」命中:', hitN > 0 ? 'PASS (' + hitN + ' 人)' : 'FAIL');
+  kw.value = ''; kw.dispatchEvent(new w.Event('input'));
+
+  // ⑤ 筛选后选中高亮不能丢
+  w.document.querySelector('#playerList .ally-item').click();
+  const selA = w.document.querySelectorAll('.pf-select')[0];
+  if (selA.options.length > 1) {
+    selA.value = selA.options[1].value;
+    selA.dispatchEvent(new w.Event('change'));
+    const remain = w.document.querySelectorAll('#playerList .ally-item').length;
+    const activeN = w.document.querySelectorAll('#playerList .ally-item.active').length;
+    console.log('筛选后选中高亮仍在:', (remain === 0 || activeN === 1) ? 'PASS' : 'FAIL (列表 ' + remain + ' 项 / 高亮 ' + activeN + ')');
+    selA.value = selA.options[0].value;
+    selA.dispatchEvent(new w.Event('change'));
+  } else {
+    console.log('筛选后选中高亮仍在: (本数据只有一个同盟，跳过)');
+  }
+
+  // ⑥ 战报浮层：仿游戏战报卡结构 + 包含被当前筛选排除的场次并打标
+  const logBtn = w.document.querySelector('.pc-log');
+  logBtn.click();
+  const mask = w.document.querySelector('.bl-mask');
+  const nCards = mask ? mask.querySelectorAll('.bl2-card').length : -1;
+  const nHeroes = mask ? mask.querySelectorAll('.bl2-hero').length : -1;
+  const nStamps = mask ? mask.querySelectorAll('.bl2-stamp').length : -1;
+  const nBars = mask ? mask.querySelectorAll('.bl2-bar').length : -1;
+  const sumTxt = mask ? ((mask.querySelector('.bl2-sum') || {}).textContent || '').trim() : '';
+  const pagerTxt = mask ? (mask.querySelector('.bl-pager') || {}).textContent || '' : '';
+  const tagN = mask ? mask.querySelectorAll('.bl-filtered-tag').length : -1;
+  console.log('战报浮层打开:', mask ? 'PASS' : 'FAIL',
+    '| 卡片', nCards, '| 武将卡', nHeroes, '| 印章', nStamps, '| 兵力条', nBars);
+  console.log('结构完整（每场两排武将卡 + 印章 + 两条兵力条）:',
+    nCards > 0 && nHeroes >= nCards * 2 && nStamps === nCards && nBars === nCards * 2 ? 'PASS' : 'FAIL');
+  console.log('顶部统计横幅:', sumTxt || '(空)');
+  console.log('场次统计:', pagerTxt.trim().slice(0, 60));
+  console.log('被排除场次已打标:', tagN >= 0 ? 'PASS（本页 ' + tagN + ' 条标记）' : 'FAIL');
+  const closeBtn = mask && mask.querySelector('.bl-close');
+  if (closeBtn) closeBtn.click();
+
+  // ⑦ 「打平续战」的多段战报折叠为一次完整战斗（兵力首尾衔接识别）
+  {
+    const ACx = w.AC;
+    const rr = ACx.app.state.result;
+    // 明细仍保留原始段（战报浮层负责折叠），统计口径则已在 analyze 里合并
+    const all = ACx.app.store.battles;
+    const buckets = new Map();
+    all.forEach((b) => {
+      if (!b.ts) return;
+      [['atk', b.atk], ['def', b.def]].forEach((pair) => {
+        const role = pair[0], side = pair[1];
+        if (!side || !side.player || !side.key) return;
+        const k = side.player + '|' + side.key;
+        if (!buckets.has(k)) buckets.set(k, { player: side.player, key: side.key, segs: [] });
+        buckets.get(k).segs.push({ me: side, foe: role === 'atk' ? b.def : b.atk, ts: b.ts, place: b.place });
+      });
+    });
+    let hit = null, multiChains = 0;
+    buckets.forEach((v) => {
+      if (hit) return;
+      const cs = ACx.playerAnalysis.groupChains(v.segs);
+      if (cs.some((c) => c.length > 1)) { hit = v; multiChains = cs.filter((c) => c.length > 1).length; }
+    });
+    if (hit) {
+      ACx.playerAnalysis.openBattleLog({
+        result: rr, allBattles: all, playerName: hit.player,
+        comp: { key: hit.key, display: hit.key, troopSig: '' }
+      });
+      const m = w.document.querySelector('.bl-mask');
+      const nChain = m ? m.querySelectorAll('.bl2-chain').length : 0;
+      const moreEls = m ? Array.prototype.slice.call(m.querySelectorAll('.bl2-chain-more')) : [];
+      const collapsed = moreEls.length > 0 && moreEls.every((e) => e.hidden);
+      console.log('续战折叠: 折叠组', nChain, '个（该玩家有', multiChains, '条链）| 默认收起:', collapsed ? 'PASS' : 'FAIL');
+      const t = m && m.querySelector('.bl2-chain-toggle');
+      if (t) t.click();
+      const opened = moreEls.length > 0 && !moreEls[0].hidden;
+      const restCards = m ? m.querySelectorAll('.bl2-chain-more .bl2-card').length : 0;
+      console.log('展开后显示其余段:', opened && restCards > 0 ? 'PASS' : 'FAIL', '| 其余段卡片', restCards);
+      // 展开区须由新到旧（与列表一致），段号仍按发生顺序
+      if (m) {
+        const ts = Array.prototype.slice.call(m.querySelectorAll('.bl2-chain-more .bl2-time'))
+          .map((e) => Date.parse(e.textContent.replace(/\//g, '-').replace(' ', 'T')));
+        const desc = ts.length < 2 || ts.every((v, i) => i === 0 || ts[i - 1] >= v);
+        const labels = Array.prototype.slice.call(m.querySelectorAll('.bl2-chain-more .bl2-seq'))
+          .map((e) => e.textContent);
+        const seqOk = labels.every((s, i) => s === '第 ' + (labels.length - i) + ' 段');
+        console.log('展开区由新到旧:', desc ? 'PASS' : 'FAIL', '| 段号按发生顺序:', seqOk ? 'PASS' : 'FAIL',
+          '|', labels.join(' , '));
+      }
+      const cb2 = m && m.querySelector('.bl-close');
+      if (cb2) cb2.click();
+    } else {
+      console.log('续战折叠: (本数据没有续战链)');
+    }
+  }
+
+  // ⑧ 统计层已把续战合并为「一次完整战斗」（analyze 默认 mergeChains: true）
+  {
+    const ACx = w.AC;
+    const rr = ACx.app.state.result;
+    const s = rr.stats;
+    const rawN = ACx.app.store.battles.length;
+    const mergedOk = s.chainedMerged > 0 && s.totalInput < rawN && s.rawInput === rawN;
+    const foot = (w.document.querySelector('#stageFoot') || {}).textContent || '';
+    const footOk = foot.indexOf('打平续战合并') >= 0;
+    const chained = rr.battles.filter((b) => b.chainSegs > 1);
+    const fieldsOk = chained.every((b) => b.atk.origin != null && b.atk.remain != null &&
+      b.result && typeof b.round === 'number');
+    // 关掉合并重算一次：平局应当变多（中间段的 draw 被放回来了）
+    const off = ACx.analyzer.analyze(ACx.app.store.battles, Object.assign({}, ACx.app.filters, { mergeChains: false }));
+    const drawOn = rr.battles.filter((b) => b.result === 'draw').length;
+    const drawOff = off.battles.filter((b) => b.result === 'draw').length;
+    console.log('续战合并: ' + s.chainedMerged + ' 次 | 统计分母 ' + s.totalInput + '（原始 ' + rawN + ' 段）',
+      mergedOk ? 'PASS' : 'FAIL');
+    console.log('状态栏提示合并次数:', footOk ? 'PASS' : 'FAIL');
+    console.log('合并体字段完整（开战/剩余兵力、胜负、回合）:', fieldsOk ? 'PASS' : 'FAIL',
+      '| 含续战的对局', chained.length, '场');
+    console.log('合并后平局减少（口径确实变了）:', drawOn < drawOff ? 'PASS' : 'FAIL',
+      drawOff + ' -> ' + drawOn);
   }
 }
 

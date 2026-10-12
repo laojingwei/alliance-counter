@@ -958,6 +958,7 @@ window.AC = window.AC || {};
     const s = r.stats;
     const parts = [];
     parts.push('生效对局 ' + s.totalKept + ' / ' + s.totalInput + ' 场');
+    if (s.chainedMerged) parts.push('打平续战合并 ' + s.chainedMerged + ' 次');
     if (s.skippedMirror) parts.push('排除内战 ' + s.skippedMirror + ' 场');
     if (s.skippedFilter) parts.push('样本过滤 ' + s.skippedFilter + ' 场');
     if (s.skipped) parts.push('无法识别 ' + s.skipped + ' 场');

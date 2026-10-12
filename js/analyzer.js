@@ -22,6 +22,7 @@ window.AC = window.AC || {};
     excludeDraw: false,     // 平局是否退出胜率分母
     strongOnly: false,      // 只保留强克制
     shrinkK: 3,             // 收缩强度：越大越保守
+    mergeChains: true,      // 打平续战的多段先合并为「一次完整战斗」再统计（明细仍保留每段）
     /* ---- 培养度控制：只有明细数据带红度/品级，宽表会自动跳过 ---- */
     onlyRedParity: false,   // 只统计双方平均红度接近的对局
     redParityGap: 1,        // 「接近」的阈值
@@ -131,6 +132,14 @@ window.AC = window.AC || {};
     const opts = normalizeOpts(options);
     const dim = opts.dimension;
 
+    /* 打平续战的多段先合并为「一次完整战斗」：
+       否则中间的平局段会被当成独立对局，平局与场次双双虚高（实测 demo 数据虚增 36 场平局）。
+       合并不改动原对象，明细展示（战报浮层）仍按段呈现并折叠。 */
+    const mergedRes = opts.mergeChains
+      ? M.mergeChains(battles)
+      : { list: battles, merged: 0, rawSegs: battles.length };
+    const src = mergedRes.list;
+
     const kept = [];
     let skipped = 0, skippedMirror = 0, skippedFilter = 0;
 
@@ -146,8 +155,8 @@ window.AC = window.AC || {};
       return node;
     }
 
-    for (let i = 0; i < battles.length; i++) {
-      const b = battles[i];
+    for (let i = 0; i < src.length; i++) {
+      const b = src[i];
       if (b.result === 'unknown') { skipped++; continue; }
 
       const atkKey = M.groupKey(b, 'atk', dim);
@@ -437,7 +446,9 @@ window.AC = window.AC || {};
       .sort(function (a, b) { return b.n - a.n || b.rate - a.rate; });
 
     const stats = {
-      totalInput: battles.length,
+      totalInput: src.length,          // 合并续战后的总数：与 totalKept 同口径
+      rawInput: mergedRes.rawSegs,     // 导入的原始段数
+      chainedMerged: mergedRes.merged, // 合并掉的续战链数
       totalKept: kept.length,
       skipped: skipped,
       skippedMirror: skippedMirror,
@@ -460,7 +471,7 @@ window.AC = window.AC || {};
     return {
       opts: opts,
       battles: kept,
-      allBattles: battles,
+      allBattles: src,                 // 合并续战、但未做样本过滤的全量（供「被筛选排除」计数）
       nodeMap: nodeMap,
       nodeList: nodeList,
       pairMap: pairMap,

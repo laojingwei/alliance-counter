@@ -546,7 +546,11 @@ window.AC = window.AC || {};
    *  3) 不再排除对方自己在用的主力阵容——镜像对拼是真实可选项；
    *     内战部分没有对抗数据，单独标注为"无法评估"，不参与计算。
    *  4) 候选仍有打击面门槛（全局出场次数），避免冷门阵容入选。
+   *  5) 若传入 options.playerPairs（某个玩家自己的交手记录），胜负口径从「全服平均」
+   *     切换为「他本人」：个人观测为主、全局数据作先验做贝叶斯融合——
+   *     同一套阵容由不同人操作，配速 / 技能 / 红度差异会让结果明显偏离全服均值。
    *
+   * @param {Object} [options.playerPairs] Map<pairKey, {n,win,loss,draw}>，胜负均为该玩家视角
    * @returns [{ key, display, expRate, rawRate, coverage, mirrorShare, evidence, reach, detail }]
    */
   function counterAdvice(result, ally, options) {
@@ -557,9 +561,11 @@ window.AC = window.AC || {};
       minCandidateN: 5,      // 候选阵容的打击面门槛：全局至少出场多少次
       minCoverage: 0.35,     // 至少要能评估该同盟这么多比例的出场
       generalCoverage: 0.6,  // 能评估这么多算「通用方案」
-      riskRate: 0.5          // 低于这个胜率就算「要小心的对手」
+      riskRate: 0.5,         // 低于这个胜率就算「要小心的对手」
+      priorTau: 6            // 个人观测的相对强度：个人 1 场 ≈ 全局先验 6 场
     }, options || {});
 
+    const pp = opts.playerPairs || null;   // 个人交手记录（有则优先个人口径）
     const dist = ally.compList;
     if (!dist.length) return [];
     const total = ally.n;
@@ -576,17 +582,39 @@ window.AC = window.AC || {};
         const w = c.n / total;
         // 与该候选同名：属于内战，没有对抗数据，单独标注但不参与计算
         if (c.key === node.key) { mirror += w; return; }
-        const p = AC.analyzer.getPair(result, c.key, node.key);
-        if (!p || p.n < opts.minSample) return;          // 没交手过：跳过，不填充
-        const myRate = p.lo === node.key ? p.rateLo : 1 - p.rateLo;
-        const shrunk = (myRate * p.n + 0.5 * opts.shrinkK) / (p.n + opts.shrinkK);
+
+        // 全局口径：这套阵容（不分是谁在用）对候选的胜负
+        const gp = AC.analyzer.getPair(result, c.key, node.key);
+        const gN = gp ? gp.n : 0;
+        const gRate = gp ? (gp.lo === node.key ? gp.rateLo : 1 - gp.rateLo) : null;
+        // 个人口径：他本人用这套阵容时的胜负。记录是「他用 c 打 node」的胜率，
+        // 而这里要的是「候选 node 打他 c」的胜率，方向要翻过来。
+        let pN = 0, pRate = null;
+        if (pp) {
+          const rec = pp.get(AC.analyzer.pairKeyOf(c.key, node.key));
+          if (rec && rec.n) { pN = rec.n; pRate = 1 - (rec.win + rec.draw * 0.5) / rec.n; }
+        }
+        if (gN < opts.minSample && pN < opts.minSample) return;   // 两边都没交手够：跳过，不填充
+
+        let myRate, src;
+        if (!pN) { myRate = gRate; src = 'global'; }              // 只有全局数据
+        else if (!gN) { myRate = pRate; src = 'player'; }         // 只跟他交手过
+        else {
+          // 个人观测 + 全局先验：他本人的配速 / 技能 / 红度会带来系统性偏移
+          const gShrunk = (gRate * gN + 0.5 * opts.shrinkK) / (gN + opts.shrinkK);
+          myRate = (pRate * pN + gShrunk * opts.priorTau) / (pN + opts.priorTau);
+          src = 'mix';
+        }
+        // 证据量：个人场次包含在全局里，不能相加，取较大者
+        const evN = Math.max(gN, pN);
+        const shrunk = (myRate * evN + 0.5 * opts.shrinkK) / (evN + opts.shrinkK);
         wsum += w * shrunk;
         wtot += w;
-        evidence += p.n;
-        detail.push({ comp: c.display, key: c.key, share: w, rate: myRate, shrunk: shrunk, n: p.n, troopSig: c.troopSig });
-        // 打不过的：按对方使用频率排，越常用越要提醒
+        evidence += evN;
+        detail.push({ comp: c.display, key: c.key, share: w, rate: myRate, shrunk: shrunk, n: gN, pn: pN, src: src, troopSig: c.troopSig });
+        // 打不过的：按对方使用频率排，越常用越要提醒（判定用融合后的胜率）
         if (myRate < opts.riskRate) {
-          risks.push({ comp: c.display, key: c.key, share: w, rate: myRate, n: p.n, troopSig: c.troopSig });
+          risks.push({ comp: c.display, key: c.key, share: w, rate: myRate, n: gN, pn: pN, src: src, troopSig: c.troopSig });
         }
       });
 
@@ -624,20 +652,37 @@ window.AC = window.AC || {};
     return out;
   }
 
-  /** 针对该同盟每套主流队伍，列出最能压制它的阵容 */
+  /** 针对该同盟每套主流队伍，列出最能压制它的阵容（同样支持个人交手口径） */
   function bestAgainst(result, ally, options) {
-    const opts = Object.assign({ minSample: 2, top: 3, comps: 6, minCandidateN: 5, shrinkK: 3 }, options || {});
+    const opts = Object.assign({ minSample: 2, top: 3, comps: 6, minCandidateN: 5, shrinkK: 3, priorTau: 6 }, options || {});
+    const pp = opts.playerPairs || null;
     return ally.compList.slice(0, opts.comps).map(function (c) {
       const list = [];
       result.nodeMap.forEach(function (node) {
         if (node.key === c.key) return;
         if (node.n < opts.minCandidateN) return;          // 同样要求候选有足够打击面
-        const p = AC.analyzer.getPair(result, c.key, node.key);
-        if (!p || p.n < opts.minSample) return;
-        const rate = p.lo === node.key ? p.rateLo : 1 - p.rateLo;
+        const gp = AC.analyzer.getPair(result, c.key, node.key);
+        const gN = gp ? gp.n : 0;
+        const gRate = gp ? (gp.lo === node.key ? gp.rateLo : 1 - gp.rateLo) : null;
+        let pN = 0, pRate = null;
+        if (pp) {
+          const rec = pp.get(AC.analyzer.pairKeyOf(c.key, node.key));
+          // 同样翻方向：记录是「他用 c 打 node」，要的是「候选 node 打他的 c」
+          if (rec && rec.n) { pN = rec.n; pRate = 1 - (rec.win + rec.draw * 0.5) / rec.n; }
+        }
+        if (gN < opts.minSample && pN < opts.minSample) return;
+        let rate, src;
+        if (!pN) { rate = gRate; src = 'global'; }
+        else if (!gN) { rate = pRate; src = 'player'; }
+        else {
+          const gs = (gRate * gN + 0.5 * opts.shrinkK) / (gN + opts.shrinkK);
+          rate = (pRate * pN + gs * opts.priorTau) / (pN + opts.priorTau);
+          src = 'mix';
+        }
+        const evN = Math.max(gN, pN);
         // 用收缩后的胜率排序，避免「2 场全胜」压过「20 场赢 65%」
-        const shrunk = (rate * p.n + 0.5 * opts.shrinkK) / (p.n + opts.shrinkK);
-        list.push({ key: node.key, display: node.display, rate: rate, shrunk: shrunk, n: p.n, troopSig: node.troopSig });
+        const shrunk = (rate * evN + 0.5 * opts.shrinkK) / (evN + opts.shrinkK);
+        list.push({ key: node.key, display: node.display, rate: rate, shrunk: shrunk, n: gN, pn: pN, src: src, troopSig: node.troopSig });
       });
       list.sort(function (a, b) { return b.shrunk - a.shrunk || b.n - a.n; });
       return { comp: c, best: list.slice(0, opts.top) };
@@ -889,11 +934,25 @@ window.AC = window.AC || {};
               : U.el('span', { text: '-' }),
             p.comps.length
               ? U.el('button', {
-                class: 'at-detail', text: '详情',
+                class: 'at-detail', text: '配置',
                 title: '查看这套阵容的完整配置（技能 / 兵书 / 装备 / 战马）；同一套阵容换过配置会分别列出',
                 onclick: function (e) {
                   e.stopPropagation();
                   openCompConfig(p.name, p, p.comps[0]);
+                }
+              })
+              : null,
+            // 战报浮层与玩家分析共用（同一套仿游戏战报卡），看这个人的这套阵容打过谁
+            (p.comps.length && AC.playerAnalysis && AC.playerAnalysis.openBattleLog)
+              ? U.el('button', {
+                class: 'at-detail at-log', text: '战报',
+                title: '查看 ' + p.name + ' 用这套阵容的全部对战（含被当前筛选排除的场次）',
+                onclick: function (e) {
+                  e.stopPropagation();
+                  AC.playerAnalysis.openBattleLog({
+                    result: result, allBattles: result.allBattles,
+                    playerName: p.name, comp: p.comps[0]
+                  });
                 }
               })
               : null
@@ -1114,7 +1173,7 @@ window.AC = window.AC || {};
           '。这类阵容不会出现在上面的推荐里，如果你手上也有，镜像对拼只能靠临场发挥，数据无法判断优劣。' }));
       }
 
-      as.appendChild(U.el('p', { class: 'hint', text: '胜率算法：Σ(该同盟使用各队伍的比例 × 推荐阵容对该队伍的胜率) ÷ Σ(这些比例)——只统计双方真正交手过的组合，没交手过的不计入，而是用「能对上多少出场」体现覆盖面。候选阵容另有打击面门槛（全局至少出场 5 次），并按交手场次做了温和收缩。对方自己也在用的阵容同样可以入选（镜像对拼），只是那部分内战没有对抗数据。' }));
+      as.appendChild(U.el('p', { class: 'hint', text: '胜率算法：Σ(该同盟使用各队伍的比例 × 推荐阵容对该队伍的胜率) ÷ Σ(这些比例)——只统计双方真正交手过的组合，没交手过的不计入，而是用「能对上多少出场」体现覆盖面。候选阵容另有打击面门槛（全局至少出场 5 次），并按交手场次做了温和收缩。对方自己也在用的阵容同样可以入选（镜像对拼），只是那部分内战没有对抗数据。这里用的是全服同款阵容的数据；切到「玩家分析」看具体某个人时，会优先采用他本人的交手记录。' }));
     }
     host.appendChild(as);
 

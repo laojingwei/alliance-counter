@@ -644,6 +644,8 @@ canvas { display: block; width: 100%; height: 100%; }
   color: #8dc0ff; transition: .15s;
 }
 .at-detail:hover { background: rgba(78, 168, 255, .26); color: #dbe7ff; border-color: rgba(78, 168, 255, .7); }
+/* 「详情」右侧的「战报」按钮 */
+.at-comp .at-detail + .at-detail { margin-left: 2px; }
 .at-rate { font-variant-numeric: tabular-nums; font-weight: 600; }
 .at-red { font-variant-numeric: tabular-nums; font-weight: 600; }
 
@@ -1080,6 +1082,14 @@ details.fold > .fold-summary + * { margin-top: 0; }
 .adv-rate { font-size: 13px; font-weight: 700; margin-left: auto; }
 .adv-cov { font-size: 11px; color: #8fa3c4; }
 .adv-reason { font-size: 11.5px; color: #8fa3c4; margin-top: 4px; }
+/* 玩家分析：逐条对阵明细（个人交手 / 全局口径都标出来） */
+.adv-detail { margin-top: 5px; display: flex; flex-direction: column; gap: 2px; }
+.adv-detail-row { display: grid; grid-template-columns: minmax(0,1fr) auto 52px 150px; align-items: center;
+  gap: 10px; font-size: 11px; color: #8fa3c4; }
+.adv-d-name { display: flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.adv-d-n { font-variant-numeric: tabular-nums; }
+.adv-d-rate { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+.adv-d-src { color: #5d6f8f; text-align: right; }
 .adv-risks { font-size: 11.5px; color: #e5a86b; margin-top: 4px; }
 .adv-risks-t { color: #8fa3c4; }
 /* 玩家筛选栏 */
@@ -1096,6 +1106,15 @@ details.fold > .fold-summary + * { margin-top: 0; }
 .pc-wl { color: #8fa3c4; font-variant-numeric: tabular-nums; }
 /* 被筛选排除的场次提示 */
 .pc-more { color: #e5a86b; font-size: 11px; }
+/* 场次太少、胜率不可信 */
+.ai-weak, .pc-weak { color: #e5a86b; font-size: 10.5px; }
+/* 玩家分析：单点克制的一行（阵容 / 数据来源 / 胜率） */
+.pc-xrow { display: grid; grid-template-columns: minmax(0,1fr) 148px 56px; align-items: center; gap: 10px;
+  padding: 4px 8px; border-radius: 5px; font-size: 12px; }
+.pc-xrow:nth-child(odd) { background: rgba(255,255,255,0.02); }
+.pc-xrow:hover { background: rgba(78, 168, 255, .12); }
+.pc-xsrc { color: #5d6f8f; font-size: 11px; }
+.pc-xrate { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
 /* 战报浮层 */
 .bl-mask { position: fixed; inset: 0; background: rgba(4, 8, 16, 0.72); z-index: 200;
   display: flex; align-items: center; justify-content: center; padding: 24px; }
@@ -1182,38 +1201,105 @@ details.fold > .fold-summary + * { margin-top: 0; }
   .fm-slots { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
   .fm-slot.filled { padding: 5px; }
 }
-.bl-card { border: 1px solid #1e2a44; border-radius: 8px; background: #0d1526; }
-.bl-card.is-win { border-left: 3px solid #35c46b; }
-.bl-card.is-loss { border-left: 3px solid #e5656e; }
-.bl-card.is-draw { border-left: 3px solid #8fa3c4; }
-.bl-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
-  padding: 7px 10px; background: #101a2e; font-size: 11.5px; color: #8fa3c4; }
-.bl-idx { color: #5d6f8f; }
-.bl-time { color: #c7d6f0; font-variant-numeric: tabular-nums; }
-.bl-place { color: #7d90b0; }
-.bl-role { color: #7d90b0; }
-.bl-result { margin-left: auto; font-size: 14px; font-weight: 700; }
-.is-win .bl-result { color: #35c46b; }
-.is-loss .bl-result { color: #e5656e; }
-.is-draw .bl-result { color: #8fa3c4; }
-.bl-side { display: grid; grid-template-columns: 22px 1fr 118px; align-items: start; gap: 10px;
-  padding: 8px 10px 10px; border-top: 1px solid #16203a; }
-.bl-side-tag { padding-top: 2px; }
-.bl-side.win { background: rgba(53, 196, 107, 0.05); }
-.bl-side-tag { color: #5d6f8f; font-size: 11.5px; }
-.bl-side-info { min-width: 0; }
-.bl-side-who { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.bl-side-player { font-size: 12.5px; color: #dbe7ff; font-weight: 600; }
-.bl-side-ally { font-size: 11px; color: #7d90b0; }
-.bl-side-troop { font-size: 10.5px; color: #5d6f8f; letter-spacing: 1px; }
-.bl-heroes { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; min-height: 22px; }
-.bl-hero { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; border-radius: 4px;
-  background: #101a2e; border: 1px solid #1b2740; font-size: 11px; color: #c7d6f0; }
-.bl-hero-red { color: #8fa3c4; font-size: 10.5px; }
-.bl-hero-red.hot { color: #e5656e; }
-.bl-side-force { text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; color: #c7d6f0; white-space: nowrap; padding-top: 2px; }
-.bl-force-sep { color: #4a5a76; }
-.bl-foot { display: flex; gap: 16px; padding: 7px 10px 9px; font-size: 11px; color: #7d90b0; border-top: 1px dashed #16203a; margin-top: 2px; }
+/* ===== 战报浮层：仿游戏战报卡 ===== */
+/* 顶部横幅：深红棕底 + 金色统计（连战 N 场 · 斩获武勋） */
+.bl2-title { background: linear-gradient(180deg, #4a2b22 0%, #33201c 55%, #2a1a17 100%);
+  border-bottom: 1px solid #6b4633; }
+.bl2-title .bl-title-l { color: #f0dcb4; }
+.bl2-sum { flex: 1 1 auto; text-align: center; color: #e8c26a; font-size: 14px; letter-spacing: 1px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .6); white-space: nowrap; overflow: hidden; }
+.bl2-sum b { font-size: 16px; margin-right: 10px; color: #ffd88a; }
+
+.bl2-card { border: 1px solid #2b3a58; border-radius: 10px; overflow: hidden;
+  background: linear-gradient(180deg, #101a2b 0%, #0b1220 100%);
+  /* .bl-body 是 column 滚动容器：卡片必须禁止收缩，否则内容一多就被压扁而不是滚动 */
+  flex: none; }
+.bl2-card.is-win { box-shadow: inset 0 0 0 1px rgba(232, 194, 106, .25); }
+/* 顶部条：攻守 + 第几场 + 地点 + 时间 */
+.bl2-top { display: flex; align-items: center; gap: 12px; padding: 5px 12px;
+  background: linear-gradient(180deg, #1b2942, #16233a); border-bottom: 1px solid #2b3a58;
+  font-size: 11.5px; color: #8fa3c4; position: relative; }
+/* 该场获得的武勋：固定在顶部条正中 */
+.bl2-merit { position: absolute; left: 50%; transform: translateX(-50%);
+  color: #e8c26a; font-weight: 600; font-variant-numeric: tabular-nums; }
+.bl2-role { display: inline-flex; align-items: center; gap: 5px; color: #dbe7ff; font-weight: 600; }
+.bl2-role-ico { font-style: normal; color: #e8c26a; font-size: 12px; }
+.bl2-seq { color: #e8c26a; }
+.bl2-round { color: #7d90b0; }
+.bl2-place { color: #4ade80; }
+.bl2-time { margin-left: auto; color: #c7d6f0; font-variant-numeric: tabular-nums; }
+.bl2-top .bl-filtered-tag { margin-left: 0; }
+/* 主体：我方卡组 | 我方信息 | 印章 | 敌方信息 | 敌方卡组 */
+.bl2-body { display: flex; align-items: center; gap: 10px; padding: 10px 12px; }
+.bl2-cards { display: flex; gap: 6px; flex: 0 0 auto; }
+.bl2-hero { position: relative; width: 74px; border: 1px solid #6b5a3a; border-radius: 8px;
+  overflow: hidden; background: #141c2c; box-shadow: 0 2px 6px rgba(0, 0, 0, .4);
+  flex: none; }
+.bl2-face { display: block; width: 100%; height: 100px; }
+.bl2-face img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.bl2-face .hero-icon-ph { font-size: 26px; }
+.bl2-lv { position: absolute; left: 4px; top: 22px; padding: 0 4px; border-radius: 3px;
+  background: rgba(0, 0, 0, .6); color: #ffd88a; font-size: 10px; line-height: 15px; }
+.bl2-hero .troop { position: absolute; left: 4px; top: 3px; }
+.bl2-stars { position: absolute; left: 0; right: 0; bottom: 21px;
+  display: flex; justify-content: center; gap: 1px; }
+.bl2-stars i { width: 10px; height: 10px; background: rgba(255, 255, 255, .22);
+  clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%); }
+.bl2-stars i.on { background: #e5484d; filter: drop-shadow(0 0 2px rgba(229, 72, 77, .85)); }
+.bl2-name { position: absolute; left: 0; right: 0; bottom: 0; text-align: center; font-size: 11px;
+  color: #e8c26a; padding: 2px 2px 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  background: linear-gradient(180deg, rgba(10, 14, 22, .1), rgba(10, 14, 22, .82)); }
+/* 信息块：我方右对齐、敌方左对齐，卡组在最外侧 */
+.bl2-info { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.bl2-info.me { align-items: flex-end; text-align: right; }
+.bl2-info.foe { align-items: flex-start; }
+.bl2-who { display: flex; align-items: center; gap: 6px; }
+.bl2-pname { font-size: 13px; font-weight: 700; }
+.bl2-pname.ally { color: #7ed957; }
+.bl2-pname.enemy { color: #e5656e; }
+.bl2-aname { font-size: 11px; color: #8fa3c4; }
+.bl2-force-n { font-size: 12px; color: #c7d6f0; font-variant-numeric: tabular-nums; margin-bottom: 3px; }
+.bl2-bar { width: 148px; height: 7px; border-radius: 4px; background: #1b2740; overflow: hidden; }
+.bl2-bar i { display: block; height: 100%; border-radius: 4px; }
+.bl2-info.foe .bl2-bar i { background: linear-gradient(90deg, #c9353c, #ff7a5c); }
+.bl2-info.me .bl2-bar i { background: linear-gradient(90deg, #35507a, #4ea8ff); }
+.bl2-sub { font-size: 10.5px; color: #5d6f8f; }
+/* 中央结果印章 */
+.bl2-stamp { flex: 0 0 92px; text-align: center; position: relative; }
+.bl2-stamp::before { content: ''; position: absolute; left: 50%; top: 46%; width: 78px; height: 78px;
+  transform: translate(-50%, -50%); border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 255, .06), rgba(255, 255, 255, 0) 70%);
+  border: 1px solid rgba(255, 255, 255, .07); }
+.bl2-stamp b { position: relative; display: block; font-size: 48px; font-weight: 900; line-height: 1;
+  transform: rotate(-8deg); }
+.bl2-stamp.loss b { color: #cfdcec; text-shadow: 0 2px 10px rgba(0, 0, 0, .55); opacity: .92; }
+.bl2-stamp.win b { color: #e8c26a; text-shadow: 0 2px 12px rgba(232, 194, 106, .45); }
+.bl2-stamp.draw b { color: #8fa3c4; }
+.bl2-stam { position: relative; margin-top: 8px; font-size: 11px; color: #e5656e; }
+/* 同一次交战的多段战报（打平续战）：折叠为一组，默认只看最终结果 */
+.bl2-chain { display: flex; flex-direction: column; flex: none; }
+.bl2-chain-bar { display: flex; align-items: center; gap: 10px; padding: 4px 12px;
+  background: linear-gradient(180deg, #1f2a3f, #18243a); border: 1px solid #2b3a58; border-bottom: none;
+  border-radius: 10px 10px 0 0; font-size: 11px; color: #8fa3c4; }
+.bl2-chain-tag { color: #e8c26a; font-weight: 600; }
+.bl2-chain-note { color: #5d6f8f; }
+.bl2-chain-toggle { margin-left: auto; background: #14243f; color: #9db2d4; border: 1px solid #22304d;
+  border-radius: 5px; padding: 1px 10px; font-size: 11px; cursor: pointer; white-space: nowrap; }
+.bl2-chain-toggle:hover { border-color: #3b82f6; color: #fff; }
+.bl2-chain > .bl2-card { border-radius: 0 0 10px 10px; border-top: none; }
+.bl2-chain-more { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
+.bl2-chain-more[hidden] { display: none; }
+/* 被当前筛选条件排除的场次：照样列出，但弱化并打标 */
+.bl2-card.is-filtered { opacity: .6; }
+.bl-filtered-tag { font-size: 10.5px; color: #e5a86b;
+  border: 1px solid rgba(229, 168, 107, .4); border-radius: 4px; padding: 0 6px; }
+/* 窄屏折行，避免武将卡被挤没 */
+@media (max-width: 720px) {
+  .bl2-body { flex-wrap: wrap; justify-content: center; }
+  .bl2-hero { width: 62px; }
+  .bl2-face { height: 84px; }
+  .bl2-bar { width: 120px; }
+}
 .bl-pager { display: flex; align-items: center; justify-content: center; gap: 14px;
   padding: 10px 14px; border-top: 1px solid #1b2740; background: #0d1526; }
 .bl-btn { background: #14243f; color: #c7d6f0; border: 1px solid #22304d; border-radius: 6px;
@@ -1226,20 +1312,6 @@ details.fold > .fold-summary + * { margin-top: 0; }
 .pc-log { background: #14243f; color: #9db2d4; border: 1px solid #22304d; border-radius: 5px;
   padding: 2px 10px; font-size: 11px; cursor: pointer; }
 .pc-log:hover { border-color: #3b82f6; color: #fff; }
-/* 卡片中央的结果印章（仿游戏战报） */
-.bl-card { position: relative; }
-.bl-stamp { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  pointer-events: none; z-index: 0; overflow: hidden; }
-.bl-stamp b { font-size: clamp(52px, 7vw, 82px); font-weight: 900; letter-spacing: 10px;
-  line-height: 1; padding: 8px 18px; border-radius: 12px;
-  transform: rotate(-9deg); opacity: 0.10;
-  text-shadow: 0 0 18px currentColor; }
-.bl-card.is-win .bl-stamp b { color: #e8c26a; opacity: 0.12; }
-.bl-card.is-loss .bl-stamp b { color: #e5656e; opacity: 0.11; }
-.bl-card.is-draw .bl-stamp b { color: #8fa3c4; opacity: 0.09; }
-/* 内容压到印章之上 */
-.bl-card > .bl-head, .bl-card > .bl-side, .bl-card > .bl-foot { position: relative; z-index: 1; }
-.bl-card > .bl-head { background: rgba(16, 26, 46, 0.86); }
 /* 武将对位里的技能表（4 列） */
 .hp-detail .ally-table .ht-head, .hp-detail .ally-table .ht-row {
   grid-template-columns: minmax(0, 1fr) 44px 42px 58px;
