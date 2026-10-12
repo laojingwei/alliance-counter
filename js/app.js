@@ -1463,7 +1463,9 @@ window.AC = window.AC || {};
 
   /* ================= 版本与缓存自检 ================= */
 
-  const BUILD = '202610121450a';
+  /* 版本号来自 js/version.js（由 tools/bump-version.mjs 从 version.json 生成），
+     不再手工维护：升级只改 version.json 后跑一次该脚本即可。 */
+  const BUILD = (window.AC && window.AC.VERSION && window.AC.VERSION.version) || 'dev';
 
   /**
    * 仓库改动后浏览器可能仍用缓存的旧 js/css，导致新功能（如兵种徽章）不显示。

@@ -201,13 +201,25 @@ zip 内是一层目录 `alliance-counter-v<版本号>/`，结构与 GitHub 下�
 
 ### 以后每次发新版
 
-改这几处，让版本号保持一致：
+`version.json` 是**唯一配置源**，改完跑一次同步脚本即可，不用再手工对三处：
 
-| 文件 | 改什么 |
+```bash
+# 方式一：只改 version.json（version / releasedAt / name / notes）后同步
+node tools/bump-version.mjs
+
+# 方式二：顺手把版本号也改了（发布日期自动更新）
+node tools/bump-version.mjs 202610122200a
+```
+
+脚本会自动同步三处（漏一处就会「页面显示旧版本」或「浏览器拿到旧缓存」）：
+
+| 文件 | 脚本做什么 |
 | --- | --- |
-| `version.json` | `version`（如 `20261011j`）、`releasedAt`、`name`、`notes`（更新内容） |
-| `js/app.js` | `const BUILD = '20261011j';` |
-| `index.html` | 所有 `?v=20261011j`（全局替换一次） |
+| `version.json` | 写入新版本号与发布日期（方式二时） |
+| `js/version.js` | 由 version.json 生成，页面通过它读取版本号（`app.js` 的 `BUILD` 不再手工维护） |
+| `index.html` | 所有 `?v=` 缓存参数统一刷成新版本号，并自检是否一致 |
+
+忘了跑脚本也不怕：`node tools/test-dom.mjs .` 会逐项校验这三处是否一致，不一致直接 FAIL。
 
 `version.json` 的 `notes` 会原样显示在更新面板里，所以**写清楚改了什么**，
 别人一看就知道要不要更新、更新后有什么新东西。

@@ -778,6 +778,31 @@ console.log('\n=== 玩家分析 ===');
   }
 }
 
+// 版本号一致性：version.json 是唯一配置源，靠 tools/bump-version.mjs 同步到三处；
+// 任何一处漏同步都会让页面显示旧版本或拿到旧缓存，这里全部盯住
+{
+  const ver = JSON.parse(fs.readFileSync(path.join(root, 'version.json'), 'utf8'));
+  const pageBuild = w.AC.app.build;
+  const ok = pageBuild === ver.version;
+  console.log('页面版本来自 version.json:', ok ? 'PASS' : 'FAIL', pageBuild, 'vs', ver.version);
+  const tag = (w.document.getElementById('buildTag') || {}).textContent || '';
+  console.log('页面标题版本标签:', tag, tag === 'v' + ver.version ? 'PASS' : 'FAIL');
+
+  // js/version.js 是由 version.json 生成的，内容必须一致
+  const vjs = JSON.parse(fs.readFileSync(path.join(root, 'js/version.js'), 'utf8')
+    .split('window.AC.VERSION = ')[1].replace(/;\s*$/, ''));
+  console.log('js/version.js 与 version.json 一致:', vjs.version === ver.version ? 'PASS' : 'FAIL',
+    vjs.version, 'vs', ver.version);
+
+  // index.html 里所有 ?v= 缓存参数必须统一为当前版本（漏了就会拿旧 JS/CSS）
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const vs = Array.from(new Set((html.match(/\?v=[^"']+/g) || []).map((s) => s.slice(3))));
+  const vsOk = vs.length === 1 && vs[0] === ver.version;
+  console.log('index.html 缓存参数统一:', vsOk ? 'PASS' : 'FAIL', vs.join(' / '), 'vs', ver.version);
+  console.log('index.html 引用了 version.js:', html.indexOf('js/version.js') >= 0 ? 'PASS' : 'FAIL');
+  if (!ok || !vsOk || vjs.version !== ver.version) process.exitCode = 1;
+}
+
 console.log('\n=== JS 错误 ===');
 if (!problems.length) console.log('(无)');
 else problems.slice(0, 25).forEach((p) => console.log(' - ' + p));
