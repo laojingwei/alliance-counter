@@ -92,11 +92,27 @@ window.AC = window.AC || {};
       invalid: meta.invalid || 0
     };
 
-    let added = 0, dup = 0;
+    let added = 0, dup = 0, replaced = 0;
     this.batches.push(batch);
     for (let i = 0; i < battles.length; i++) {
       const b = battles[i];
-      if (this.byId.has(b.id)) { dup++; continue; }
+      const old = this.byId.get(b.id);
+      if (old) {
+        dup++;
+        /* 同一场战斗又导了一次：用**新导入的**替换旧的，而不是保留旧的。
+           内置示例是脱敏版（玩家显示成「玩家XXXX」），真实数据是真名；
+           若保留示例，用户导入后按自己的名字查不到记录，看起来就像「战报不全」。
+           战斗内容一致，替换不损失信息，只是让显示回到用户导入的那一份。
+           注意：替换不算「新增」，记录仍归属原批次，批次管理（删除表）才不会有孤儿记录。 */
+        const idx = this.battles.indexOf(old);
+        if (idx >= 0) {
+          b.batchId = old.batchId;
+          this.byId.set(b.id, b);
+          this.battles[idx] = b;
+          replaced++;
+        }
+        continue;
+      }
       b.batchId = batch.id;
       this.byId.set(b.id, b);
       this.battles.push(b);
@@ -104,13 +120,14 @@ window.AC = window.AC || {};
     }
     batch.added = added;
     batch.dup = dup;
+    batch.replaced = replaced;
     if (!added) {
       batch.empty = true;
       this.batches.pop();
       batch.id = null;
     }
     this.saveSoon();
-    return { batch: batch, added: added, dup: dup };
+    return { batch: batch, added: added, dup: dup, replaced: replaced };
   };
 
   Store.prototype.removeBatch = function (batchId) {

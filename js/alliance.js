@@ -81,6 +81,21 @@ window.AC = window.AC || {};
     return null;
   }
 
+  /* ---------------- 武将站位的填充顺序 ----------------
+     规则（与游戏内一致）：把阵容里的武将**按顺序从左到右**填进阵型的空位，
+     跨前后排、也不看兵种——第 2 个武将可能落在后排，第 3 个又回到前排（偃月阵就是这种形状）。
+     之前按「先前排再后排」填，会把第 2 个武将硬塞进前排，与游戏内的实际站位对不上。 */
+  function slotOrderOf(fm) {
+    return (fm && fm.slots ? fm.slots : []).slice().sort(function (a, b) {
+      return (a.c - b.c) || (a.r - b.r);      // 先看列（左→右），同列再看前后排
+    });
+  }
+  function slotNodeCmp(a, b) {
+    const ca = Number(a.getAttribute('data-c')) || 0, cb = Number(b.getAttribute('data-c')) || 0;
+    if (ca !== cb) return ca - cb;
+    return (Number(a.getAttribute('data-r')) || 0) - (Number(b.getAttribute('data-r')) || 0);
+  }
+
   /* ---------------- 阵容配置详情浮层 ----------------
      同一套阵容（相同的武将组合）玩家常常换技能 / 兵书 / 装备 / 战马，
      这里把每一种配置分别列出。武将卡样式参考游戏内战报：卡面 + 技能 + 装备。 */
@@ -184,12 +199,17 @@ window.AC = window.AC || {};
         ]);
         const grid = U.el('div', { class: 'fm-slots' });
         slots.forEach(function (s) {
-          grid.appendChild(U.el('div', { class: 'fm-slot', style: { gridColumn: String(s.c) } }));
+          grid.appendChild(U.el('div', {
+            class: 'fm-slot', 'data-r': String(s.r), 'data-c': String(s.c),
+            style: { gridColumn: String(s.c) }
+          }));
         });
         wrap.appendChild(grid);
         board.appendChild(wrap);
       });
+      // 按「从左到右」填充（跨前后排），而不是先前排再后排
       const slotNodes = Array.prototype.slice.call(board.querySelectorAll('.fm-slot'));
+      slotNodes.sort(slotNodeCmp);
       (cfg.heroes || []).forEach(function (h, i) {
         const target = slotNodes[i] || slotNodes[slotNodes.length - 1];
         if (target) {
@@ -799,7 +819,8 @@ window.AC = window.AC || {};
       const line = function (children) { return U.el('div', { class: 'ac-line' }, children); };
       const parts = [];
 
-      if (top.expRate < 0.5) {
+      const topLv = U.counterLevel(top.expRate);   // 统一分级：<45% 才算「压不住」
+      if (topLv.key === 'weak' || topLv.key === 'heavy') {
         cls = ' warn';
         parts.push(line([
           T('现有样本里，'),
@@ -807,8 +828,8 @@ window.AC = window.AC || {};
           T('——能评估的场次中，表现最好的 '),
           comp(top.display),
           T(' 也只有 '),
-          hl(U.fmtPct(top.expRate), 'ac-bad'),
-          T('，低于五五开。')
+          hl(U.fmtPct(top.expRate) + '（' + topLv.label + '）', 'ac-bad'),
+          T('，反而处在下风。')
         ]));
         parts.push(line([
           T('建议：'),
@@ -829,8 +850,8 @@ window.AC = window.AC || {};
           T(' 能对上其 '),
           hl(U.fmtPct(top.coverage, 0), 'ac-strong'),
           T(' 的出场，胜率 '),
-          hl(U.fmtPct(top.expRate), 'ac-good'),
-          hl('（累计交手 ' + top.evidence + ' 场）', 'ac-dim')
+          hl(U.fmtPct(top.expRate), topLv.key === 'strong' || topLv.key === 'counter' ? 'ac-good' : 'ac-note'),
+          hl('（' + topLv.label + ' · 累计交手 ' + top.evidence + ' 场）', 'ac-dim')
         ]));
         if (top.risks && top.risks.length) {
           parts.push(line([hl('注意：', 'ac-warn'), T('这套也有打不动的对手，遇到请避开或换阵——')]));
@@ -1075,15 +1096,19 @@ window.AC = window.AC || {};
           ])
         ]);
         list.slice(0, 4).forEach(function (a, i) {
-          const edge = a.expRate >= 0.55 ? { t: '明显优势', c: 'good' }
-            : a.expRate >= 0.5 ? { t: '微弱优势', c: 'slight' }
-              : { t: '不占优', c: 'bad' };
+          // 用全站统一的克制分级（≥80% 强克制 / 70~80% 克制 / 45~70% 均势 / <45% 不占优），
+          // 不再自己定 0.55 / 0.5 两档，免得同一个 72% 在这里叫「明显优势」、在别处叫「克制」
+          const lv = U.counterLevel(a.expRate);
+          const edge = (lv.key === 'strong') ? { t: '强克制', c: 'good' }
+            : (lv.key === 'counter') ? { t: '克制', c: 'good' }
+              : (lv.key === 'even') ? { t: '均势', c: 'slight' }
+                : { t: lv.label, c: 'bad' };
           const card = U.el('div', { class: 'advice-card' + (highlightFirst && i === 0 ? ' best' : '') }, [
             U.el('div', { class: 'ad-top' }, [
               U.el('div', { class: 'ad-rank', text: '推荐 ' + (i + 1) }),
               U.el('div', { class: 'ad-name' }, [U.compWithTroop(a.display, a.troopSig)]),
               U.el('div', { class: 'ad-edge ' + edge.c, text: edge.t }),
-              U.el('div', { class: 'ad-rate', style: { color: U.rateColor(a.expRate) }, text: U.fmtPct(a.expRate) })
+              U.el('div', { class: 'ad-rate', style: { color: lv.color }, text: U.fmtPct(a.expRate) + ' · ' + lv.label })
             ]),
             U.el('div', { class: 'ad-sub' }, [
               U.el('span', {
@@ -1270,6 +1295,7 @@ window.AC = window.AC || {};
         U.el('span', { class: 'hc-cfg-rank', text: name }),
         U.el('span', { class: 'hc-cfg-n', text: fm.note })
       ]));
+      const ordered = slotOrderOf(fm);        // 武将填充顺序：从左到右（跨前后排）
       const board = U.el('div', { class: 'fm-board' });
       [[1, '前排'], [2, '后排']].forEach(function (lane) {
         const slots = fm.slots.filter(function (s) { return s.r === lane[0]; });
@@ -1279,10 +1305,10 @@ window.AC = window.AC || {};
         const grid = U.el('div', { class: 'fm-slots' });
         slots.forEach(function (s) {
           grid.appendChild(U.el('div', {
-            class: 'fm-slot filled',
+            class: 'fm-slot filled', 'data-r': String(s.r), 'data-c': String(s.c),
             style: { gridColumn: String(s.c) }
           }, [
-            U.el('div', { class: 'fm-demo', text: '武将' + (fm.slots.indexOf(s) + 1) })
+            U.el('div', { class: 'fm-demo', text: '武将' + (ordered.indexOf(s) + 1) })
           ]));
         });
         wrap.appendChild(grid);

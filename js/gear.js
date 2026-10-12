@@ -87,6 +87,9 @@ window.AC = window.AC || {};
       const isDraw = b.result === 'draw';
       [['atk', b.atk], ['def', b.def]].forEach(function (pair) {
         const role = pair[0], side = pair[1];
+        // 人数不满 3 的残缺队（斯巴达队：翻地/占资源用，一般不主动打架）不进装备统计，
+        // 否则它们的零散样本会把特技胜率搅浑
+        if ((side.size || 0) < 3) return;
         const won = !isDraw && b.result === role;
         (side.heroes || []).forEach(function (h) {
           heroRows++;

@@ -8,9 +8,43 @@
 <meta http-equiv="Pragma" content="no-cache" />
 <meta http-equiv="Expires" content="0" />
 <title>xww-三国谋定天下：同盟对战 · 阵容克制关系图</title>
-<link rel="stylesheet" href="css/style.css?v=202610122110a" />
+<link rel="stylesheet" href="css/style.css?v=202610131740m" />
 </head>
 <body data-repo="https://github.com/laojingwei/alliance-counter">
+
+<!-- 启动加载提示：必须零依赖（此时 css/js/sample-data 可能都还没加载完，甚至 GitHub Pages 正在慢速下载），
+     所以样式与计时全部内联。数据就绪后由 app.js 调用 window.__bootReady() 撤下。
+     没有它的话页面会长时间停在「还没有数据」，用户会以为卡死而反复刷新，反而更慢。 -->
+<div id="bootLoading" style="position:fixed;inset:0;z-index:9999;background:#0a11206b;-webkit-backdrop-filter:blur(7px);backdrop-filter:blur(7px);display:flex;align-items:center;justify-content:center;font-family:system-ui,-apple-system,'Segoe UI','Microsoft YaHei',sans-serif;">
+  <div style="text-align:center;color:#c9d6ea;text-shadow:0 1px 4px rgba(0,0,0,.95),0 0 14px rgba(10,17,32,.95);">
+    <div style="width:34px;height:34px;margin:0 auto 14px;border:3px solid #1e2a44;border-top-color:#4ea8ff;border-radius:50%;animation:bootSpin .9s linear infinite;"></div>
+    <div style="font-size:15px;color:#ffffff;font-weight:600;">正在加载数据…</div>
+    <div style="font-size:12px;margin-top:6px;">数据文件较大或网络较慢时需要几秒，请不要刷新页面</div>
+    <div id="bootTime" style="font-size:12px;margin-top:4px;color:#8fa3c4;">已等待 0 秒</div>
+    <div id="bootSlow" style="font-size:12px;margin-top:8px;color:#e5a86b;display:none;">仍在加载——多等一会儿就好，反复刷新只会重新开始</div>
+  </div>
+</div>
+<style>@keyframes bootSpin { to { transform: rotate(360deg); } }</style>
+<script>
+  (function () {
+    var t0 = Date.now();
+    var tick = setInterval(function () {
+      var s = Math.round((Date.now() - t0) / 1000);
+      var time = document.getElementById('bootTime');
+      if (time) time.textContent = '已等待 ' + s + ' 秒';
+      var slow = document.getElementById('bootSlow');
+      if (slow && s >= 8) slow.style.display = 'block';
+    }, 500);
+    window.__bootReady = function () {
+      clearInterval(tick);
+      var el = document.getElementById('bootLoading');
+      if (el && el.parentNode) el.parentNode.removeChild(el);
+    };
+    // 兜底：万一 app 因异常没能通知，20 秒后自行撤下，绝不永远挡住页面
+    setTimeout(function () { if (window.__bootReady) window.__bootReady(); }, 20000);
+  })();
+</script>
+
 
 <header class="topbar">
   <div class="brand">
@@ -152,6 +186,7 @@
         <span class="field-label">最多展示阵容数 <b id="topNVal">30</b></span>
         <input type="range" id="topN" min="8" max="80" step="2" value="30" />
       </label>
+      <p class="hint">强度排行口径：<b>综合强度分 = 打击面 + 胜率 + 连胜 + 战损 + 劣势</b>（0~100 分，权重 32/26/15/12/15）——赢过的队伍越多、越能一波连赢（且连赢含金量高）、越省兵、越能少打多，分越高</p>
       <div class="row-actions">
         <button class="btn btn-ghost btn-sm" id="btnRelayout">重新布局</button>
         <button class="btn btn-ghost btn-sm" id="btnExportPng">导出 PNG</button>
@@ -308,25 +343,25 @@
 <input type="file" id="fileInput" accept=".csv,.txt" multiple hidden />
 <input type="file" id="jsonInput" accept=".json" hidden />
 
-<script src="js/version.js?v=202610122110a"></script>
-<script src="js/util.js?v=202610122110a"></script>
-<script src="js/csv.js?v=202610122110a"></script>
-<script src="js/model.js?v=202610122110a"></script>
-<script src="js/detail.js?v=202610122110a"></script>
-<script src="js/anonymize.js?v=202610122110a"></script>
-<script src="js/store.js?v=202610122110a"></script>
-<script src="js/analyzer.js?v=202610122110a"></script>
-<script src="js/graph.js?v=202610122110a"></script>
-<script src="js/matrix.js?v=202610122110a"></script>
-<script src="js/rank.js?v=202610122110a"></script>
-<script src="js/table.js?v=202610122110a"></script>
-<script src="js/alliance.js?v=202610122110a"></script>
-<script src="js/heroes.js?v=202610122110a"></script>
-<script src="js/mirror.js?v=202610122110a"></script>
-<script src="js/gear.js?v=202610122110a"></script>
-<script src="js/player.js?v=202610122110a"></script>
-<script src="js/sample-data.js?v=202610122110a"></script>
-<script src="js/update.js?v=202610122110a"></script>
-<script src="js/app.js?v=202610122110a"></script>
+<script src="js/version.js?v=202610131740m"></script>
+<script src="js/util.js?v=202610131740m"></script>
+<script src="js/csv.js?v=202610131740m"></script>
+<script src="js/model.js?v=202610131740m"></script>
+<script src="js/detail.js?v=202610131740m"></script>
+<script src="js/anonymize.js?v=202610131740m"></script>
+<script src="js/store.js?v=202610131740m"></script>
+<script src="js/analyzer.js?v=202610131740m"></script>
+<script src="js/graph.js?v=202610131740m"></script>
+<script src="js/matrix.js?v=202610131740m"></script>
+<script src="js/rank.js?v=202610131740m"></script>
+<script src="js/table.js?v=202610131740m"></script>
+<script src="js/alliance.js?v=202610131740m"></script>
+<script src="js/heroes.js?v=202610131740m"></script>
+<script src="js/mirror.js?v=202610131740m"></script>
+<script src="js/gear.js?v=202610131740m"></script>
+<script src="js/player.js?v=202610131740m"></script>
+<script src="js/sample-data.js?v=202610131740m"></script>
+<script src="js/update.js?v=202610131740m"></script>
+<script src="js/app.js?v=202610131740m"></script>
 </body>
 </html>

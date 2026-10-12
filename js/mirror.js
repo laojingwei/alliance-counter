@@ -660,6 +660,9 @@ window.AC = window.AC || {};
       if (!b.atk || !b.def) return;
       if (b.atk.key !== b.def.key) return;      // 只看内战
       if (!b.atk.origin && !b.def.origin) return;
+      /* 人数不满 3 的残缺队（1~2 个武将）是斯巴达队：翻地、占资源用，一般不主动打架，
+         把它们算进内战对比没有意义（而且它们大多是零散挨打的样本）。 */
+      if ((b.atk.size || 0) < 3 || (b.def.size || 0) < 3) return;
       let g = groups.get(b.atk.key);
       if (!g) {
         g = {

@@ -172,6 +172,49 @@ window.AC = window.AC || {};
     return 'hsl(' + lerp(268, 196, x).toFixed(0) + ',' + lerp(58, 80, x).toFixed(0) + '%,' + lerp(48, 60, x).toFixed(0) + '%)';
   }
 
+  /* ---------------- 克制分级（全站唯一口径） ----------------
+     胜率只说明「打得过打不过」，但「克制」是有档位的。全站统一按这套分，
+     免得同一个 72% 在一处叫「克制」、在另一处只说「胜率不错」。
+     ≥80% 强克制 / 70~80% 克制 / 45~70% 均势 / 30~45% 被克 / <30% 被强克 */
+  const COUNTER_LEVELS = [
+    { key: 'strong', min: 0.8, label: '强克制', short: '强克', color: '#ff7a5c' },
+    { key: 'counter', min: 0.7, label: '克制', short: '克制', color: '#ffb347' },
+    { key: 'even', min: 0.45, label: '均势', short: '均势', color: '#8fa3c4' },
+    { key: 'weak', min: 0.3, label: '被克', short: '被克', color: '#5f9de0' },
+    { key: 'heavy', min: 0, label: '被强克', short: '强克我', color: '#3a6ea5' }
+  ];
+  /** 胜率 -> 克制档位（含 key / label / 颜色） */
+  function counterLevel(rate) {
+    const r = (rate === null || rate === undefined || isNaN(rate)) ? 0 : rate;
+    for (let i = 0; i < COUNTER_LEVELS.length; i++) {
+      if (r >= COUNTER_LEVELS[i].min) return COUNTER_LEVELS[i];
+    }
+    return COUNTER_LEVELS[COUNTER_LEVELS.length - 1];
+  }
+  /** 档位取反：我打它是「克制」，反过来它打我就是「被克」 */
+  function invertCounter(key) {
+    if (key === 'strong') return 'heavy';
+    if (key === 'counter') return 'weak';
+    if (key === 'weak') return 'counter';
+    if (key === 'heavy') return 'strong';
+    return 'even';
+  }
+  function counterLevelOfKey(key) {
+    return COUNTER_LEVELS.filter(function (x) { return x.key === key; })[0] || COUNTER_LEVELS[2];
+  }
+  /** 该胜率算不算「克制」（≥70%），用于「值得专门去抓」的判断 */
+  function isCounter(rate) {
+    const k = counterLevel(rate).key;
+    return k === 'strong' || k === 'counter';
+  }
+  /** 样本收缩：小样本不要直接给极端值（1 胜 0 负 != 100% 强克制） */
+  function shrinkRate(win, n, prior, k) {
+    const base = (prior === undefined || prior === null) ? 0.5 : prior;
+    const kk = k === undefined ? 6 : k;
+    if (!n) return base;
+    return (win + base * kk) / (n + kk);
+  }
+
   /** 按 DPR 调整画布尺寸，返回逻辑宽高 */
   function fitCanvas(canvas) {
     const dpr = window.devicePixelRatio || 1;
@@ -311,6 +354,8 @@ window.AC = window.AC || {};
     fmtInt: fmtInt, fmtPct: fmtPct, fmtSigned: fmtSigned, fmtShort: fmtShort,
     debounce: debounce, easeOutCubic: easeOutCubic, countTo: countTo,
     rateColor: rateColor, nodeColor: nodeColor, fitCanvas: fitCanvas, roundRect: roundRect,
+    COUNTER_LEVELS: COUNTER_LEVELS, counterLevel: counterLevel, invertCounter: invertCounter,
+    counterLevelOfKey: counterLevelOfKey, isCounter: isCounter, shrinkRate: shrinkRate,
     hash: hash, toast: toast, downloadBlob: downloadBlob, downloadText: downloadText, stamp: stamp, esc: esc,
     troopKey: troopKey, troopColor: troopColor, troopBadge: troopBadge, troopBadges: troopBadges,
     compWithTroop: compWithTroop, troopHtml: troopHtml

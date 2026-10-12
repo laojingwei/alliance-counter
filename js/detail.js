@@ -246,6 +246,14 @@ window.AC = window.AC || {};
         resultText: pick(first, ['结果']),
         round: num(pick(first, ['回合数', '回合'])),
         parent: pick(first, ['父战报']),
+        /* 原始战报自带的连战信息（新版导出才有）：
+           recordType  block = 主战报、child = 由主战报续战拆分出的子战报
+           draws       这一场里打平续战的次数（0 表示一次打完）
+           subs        这一场触发了几条子战报 */
+        recordType: pick(first, ['记录类型']),
+        draws: num(pick(first, ['平局数'])),
+        subs: num(pick(first, ['子战报数'])),
+        matchType: pick(first, ['匹配类型']),
         streak: null,
         streakWuxun: null,
         detailed: true,

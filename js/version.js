@@ -2,7 +2,7 @@
    改完 version.json 后跑 `node tools/bump-version.mjs` 重新生成。 */
 window.AC = window.AC || {};
 window.AC.VERSION = {
-  "version": "202610122110a",
-  "releasedAt": "2026-10-12",
-  "name": "打平续战按一次完整战斗统计"
+  "version": "202610131740m",
+  "releasedAt": "2026-10-13",
+  "name": "修掉 child 败局被跳过导致的假连赢 + 连赢证据可查"
 };

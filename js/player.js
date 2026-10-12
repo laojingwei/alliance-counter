@@ -96,6 +96,19 @@ window.AC = window.AC || {};
   /** 筛选「活跃时段」时，该时段至少要占玩家这么多比例的有效对局才算「活跃在该时段」 */
   const HOUR_SHARE = 0.3;
 
+  /* 「手操抓克制」的判定 —— 只看行为，两种证据任一成立即可：
+     ① 长期集中：单一对手占比 ≥85%（50~70% 那只是碰到的多，随便打也会碰上，不算证据）
+     ② 一波连打：至少连续 4 场都在打同一套队伍、而且全赢
+        （哪怕整体占比不高，连着几场只挑这一套打已经说明他在针对） */
+  const SNIPE_MIN_N = 6;          // ① 至少交手这么多场才判（85% 之下小样本容易偶然）
+  const SNIPE_SHARE = 0.85;       // ① 单一对手占比门槛
+  const SNIPE_SHARE_PURE = 0.95;  // ① ≥95% = 几乎只打它（别的队伍基本不碰）
+  const SNIPE_RUN_MIN = 4;        // ② 连续几场打同一套（且全胜）才算「一波针对」
+
+  /* 克制分级用的是全站统一口径（AC.util.counterLevel）：≥80% 强克制 / 70~80% 克制 /
+     45~70% 均势 / 30~45% 被克 / <30% 被强克。
+     档位直接用真实胜率定（和展示同一个数），样本量的顾虑靠 SNIPE_MIN_N 门槛兜底。 */
+
   function hourBandOf(t) {
     if (t === null || t === undefined) return null;
     const d = new Date(t);
@@ -119,6 +132,12 @@ window.AC = window.AC || {};
        供所有玩家共享，用来显示「有几场被筛选条件排除」。
        （旧实现是每个玩家各扫一遍全量数据，O(P×B)，玩家一多主线程会卡死。） */
     const fullCount = new Map();
+    /* 全量口径的「玩家|阵容 -> 对手分布」：抓克制判的是**行为**（他盯着谁打），
+       不该被「只统计兵力接近 / 红度对等」这类统计筛选砍掉场次——否则真人专挑 8 场，
+       筛选后只剩 3 场就判不出来了。展示用的场次/胜率仍走筛选后口径。 */
+    const fullFoe = new Map();
+    /* 每套队伍的全量战斗序列（按时间正序用）：用来找「连续 N 场都在打同一套」的一波针对 */
+    const fullSeq = new Map();
     if (useAll) {
       fullSrc.forEach(function (b) {
         [['atk', b.atk], ['def', b.def]].forEach(function (pair) {
@@ -127,8 +146,48 @@ window.AC = window.AC || {};
           let m = fullCount.get(sd.player);
           if (!m) { m = new Map(); fullCount.set(sd.player, m); }
           m.set(sd.key, (m.get(sd.key) || 0) + 1);
+          const foeSd = pair[0] === 'atk' ? b.def : b.atk;
+          if (!sd.key || !foeSd || !foeSd.key || foeSd.key === sd.key) return;
+          /* 垃圾对局（打空城 / 练功 / 斯巴达队）：我方零损失、没拿到武勋，
+             或者这支部队人数不满 3（1~2 个武将的翻地队，一般不主动打架）。
+             这些都不该用来判断「他是不是在手动抓克制」。 */
+          const junk = ((sd.wuxun || 0) <= 0)
+            || (((sd.origin || 0) - (sd.remain || 0)) <= 0)
+            || ((sd.size || 0) < 3)
+            || ((foeSd.size || 0) < 3);
+          const fk = sd.player + '|' + sd.key;
+          let seq = fullSeq.get(fk);
+          if (!seq) { seq = []; fullSeq.set(fk, seq); }
+          seq.push({ ts: b.ts || 0, foe: foeSd.key, won: b.result === pair[0], junk: junk });
+          if (junk) return;                       // 垃圾对局不计入对手分布
+          let rec = fullFoe.get(fk);
+          if (!rec) {
+            rec = { foe: new Map(), win: new Map(), atk: new Map(), name: new Map(), total: 0 };
+            fullFoe.set(fk, rec);
+          }
+          rec.total++;
+          rec.foe.set(foeSd.key, (rec.foe.get(foeSd.key) || 0) + 1);
+          if (b.result === pair[0]) rec.win.set(foeSd.key, (rec.win.get(foeSd.key) || 0) + 1);
+          rec.atk.set(foeSd.key, (rec.atk.get(foeSd.key) || 0) + (pair[0] === 'atk' ? 1 : 0));
+          if (!rec.name.has(foeSd.key)) {
+            rec.name.set(foeSd.key, foeSd.display || foeSd.compRaw || foeSd.key);
+          }
         });
       });
+    }
+    /** 最长「连续打同一套且全胜」的场数（垃圾对局会断开连续） */
+    function bestRunOf(seq) {
+      if (!seq || !seq.length) return { n: 0, foe: '' };
+      const asc = seq.slice().sort(function (a, b) { return a.ts - b.ts; });
+      let best = { n: 0, foe: '' }, cur = null;
+      asc.forEach(function (x) {
+        if (x.junk) { cur = null; return; }      // 空城 / 练功：断开连续
+        if (x.won && cur && cur.foe === x.foe) cur.n++;
+        else if (x.won) cur = { foe: x.foe, n: 1 };
+        else cur = null;
+        if (cur && cur.n > best.n) best = { n: cur.n, foe: cur.foe };
+      });
+      return best;
     }
 
     result.battles.forEach(function (b) {
@@ -143,6 +202,10 @@ window.AC = window.AC || {};
             alliances: new Map(), compMap: new Map(),
             redSum: 0, redN: 0,       // 玩家级红度：每场一个样本（side.redAvg），不按武将重复计
             hourMap: new Map(),       // 时段 -> 场次
+            formationMap: new Map(),  // 惯用阵型 -> 场次
+            foeMap: new Map(),        // 整体打过哪些对手阵容、各多少场
+            foeWin: new Map(),        // 对手阵容键 -> 胜场
+            foeName: new Map(),       // 对手阵容键 -> 显示名
             pairMap: new Map()        // 他本人的交手记录：pairKey -> 胜负（个人克制口径）
           };
           map.set(name, p);
@@ -158,6 +221,17 @@ window.AC = window.AC || {};
 
         // 个人交手记录：他用这套阵容打「对方那套」的胜负（忽略同阵容内战）
         const foe = role === 'atk' ? b.def : b.atk;
+        if (side.formation) {
+          p.formationMap.set(side.formation, (p.formationMap.get(side.formation) || 0) + 1);
+        }
+        // 玩家级对手分布：用来判断「这人整体上是不是爱挑对手」
+        if (foe && foe.key && foe.key !== side.key) {
+          p.foeMap.set(foe.key, (p.foeMap.get(foe.key) || 0) + 1);
+          if (b.result === role) p.foeWin.set(foe.key, (p.foeWin.get(foe.key) || 0) + 1);
+          if (!p.foeName.has(foe.key)) {
+            p.foeName.set(foe.key, foe.display || foe.compRaw || foe.key);
+          }
+        }
         if (foe && foe.key && foe.key !== side.key) {
           const pk = AC.analyzer.pairKeyOf(side.key, foe.key);
           let rec = p.pairMap.get(pk);
@@ -174,7 +248,10 @@ window.AC = window.AC || {};
           c = {
             key: key, display: side.display || side.compRaw || key, troopSig: side.troopSig || '',
             n: 0, wins: 0, loss: 0, draws: 0,
-            heroAgg: new Map()   // 这套阵容里每名武将的跨场累计
+            heroAgg: new Map(),  // 这套阵容里每名武将的跨场累计
+            foeMap: new Map(),   // 这套阵容打过哪些对手阵容、各多少场（识别「手操抓克制」用）
+            foeWin: new Map(),   // 对手阵容键 -> 打赢该对手的场次（算「抓它时的胜率」）
+            foeName: new Map()   // 对手阵容键 -> 显示名
           };
           p.compMap.set(key, c);
         }
@@ -183,6 +260,17 @@ window.AC = window.AC || {};
         else if (b.result === 'draw') c.draws++;
         else c.loss++;
         aggHero(c.heroAgg, side, b.ts || 0);
+        // 对手分布：内战不算（同阵容互打说明不了「抓克制」）
+        if (foe && foe.key && foe.key !== side.key) {
+          c.foeMap.set(foe.key, (c.foeMap.get(foe.key) || 0) + 1);
+          if (b.result === role) c.foeWin.set(foe.key, (c.foeWin.get(foe.key) || 0) + 1);
+          if (!c.foeName.has(foe.key)) {
+            c.foeName.set(foe.key, foe.display || foe.compRaw || foe.key);
+          }
+          // 他在这组对局里是「主动进攻」还是「被动防守」——用来区分刷分与被人追着打
+          if (!c.foeAtk) c.foeAtk = new Map();
+          c.foeAtk.set(foe.key, (c.foeAtk.get(foe.key) || 0) + (role === 'atk' ? 1 : 0));
+        }
       });
     });
 
@@ -193,6 +281,22 @@ window.AC = window.AC || {};
       const compList = Array.from(p.compMap.values())
         .sort(function (a, b) { return b.n - a.n; })
         .map(function (c) {
+          /* 对手集中度：优先用**全量**行为（不受统计筛选影响），没有全量数据时退回筛选后口径 */
+          const ff = fullFoe.get(p.name + '|' + c.key);
+          let foeTotal = 0, topKey = '', topN = 0;
+          if (ff) {
+            ff.foe.forEach(function (v, k) {
+              foeTotal += v;
+              if (v > topN) { topN = v; topKey = k; }
+            });
+          } else {
+            c.foeMap.forEach(function (v, k) {
+              foeTotal += v;
+              if (v > topN) { topN = v; topKey = k; }
+            });
+          }
+          const topShare = foeTotal ? topN / foeTotal : 0;
+          const topDisplay = (ff && ff.name.get(topKey)) || c.foeName.get(topKey) || topKey;
           return {
             key: c.key,
             display: c.display,
@@ -204,7 +308,45 @@ window.AC = window.AC || {};
             rate: c.n ? (c.wins + c.draws * 0.5) / c.n : 0.5,
             heroes: flushHeroAgg(c.heroAgg),
             // 该阵容在全量数据里的场次；比 n 大说明有对局被筛选条件排除
-            fullN: (fm && fm.has(c.key)) ? fm.get(c.key) : c.n
+            fullN: (fm && fm.has(c.key)) ? fm.get(c.key) : c.n,
+            // 对手分布（用于展示「打过的对手有多散」）
+            foes: { total: foeTotal, kinds: c.foeMap.size, topKey: topKey, topN: topN, topShare: topShare, topDisplay: topDisplay },
+            /* 手操抓克制：样本够 + 明显盯着某一种队伍打 */
+            /* 指向性 × 胜率：
+               counter = 专挑它、而且真打得过（胜率 ≥70%）→ 真·抓克制
+               focus   = 专挑它，但只是均势（45~70%）→ 只是爱打这一套，谈不上克制
+               feeding = 专挑一个克自己的队打（<45%）→ 刷分 / 被追着打 / 任务，不是抓克制 */
+            /* 两种证据任一成立就算「针对」：
+               ① byShare：长期集中在同一套（≥85%）
+               ② runHit：连续 ≥4 场都在打同一套且全胜（一波针对性打击） */
+            sniper: (function () {
+              const run = bestRunOf(fullSeq.get(p.name + '|' + c.key));
+              const runHit = run.n >= SNIPE_RUN_MIN;
+              const byShare = foeTotal >= SNIPE_MIN_N && topShare >= SNIPE_SHARE;
+              if (!byShare && !runHit) return null;
+              const via = byShare ? 'share' : 'run';
+              const key = byShare ? topKey : run.foe;
+              const n = byShare ? topN : run.n;
+              const display = (ff && ff.name.get(key)) || c.foeName.get(key) || key;
+              const win = (ff ? ff.win.get(key) : c.foeWin.get(key)) || 0;
+              const rate = byShare ? (topN ? (win / topN) : 0) : (n ? (win >= n ? 1 : win / n) : 1);
+              const share = foeTotal ? (n / foeTotal) : 0;
+              const lv = U.counterLevel(rate);
+              const atkN = (ff ? ff.atk.get(key) : (c.foeAtk && c.foeAtk.get(key))) || 0;
+              return {
+                key: key, display: display, n: n, total: foeTotal, share: share, via: via,
+                run: runHit ? run.n : 0,
+                strong: share >= SNIPE_SHARE_PURE || lv.key === 'strong',
+                rate: rate, level: lv.key, levelLabel: lv.label, levelColor: lv.color,
+                /* via=run（连打全胜）本身就是针对性行为，直接算抓克制；
+                   via=share 才按胜率分档：counter 真克制 / focus 只是均势 / feeding 专撞被克队 */
+                kind: (via === 'run') ? 'counter'
+                  : ((lv.key === 'strong' || lv.key === 'counter') ? 'counter'
+                    : (lv.key === 'even' ? 'focus' : 'feeding')),
+                atkRatio: n ? (atkN / n) : 0,
+                why: n ? ((atkN / n) >= 0.7 ? 'self' : ((atkN / n) <= 0.3 ? 'forced' : 'mixed')) : 'mixed'
+              };
+            })()
           };
         });
 
@@ -238,7 +380,26 @@ window.AC = window.AC || {};
           return b ? b.label : null;
         })(),
         pairMap: p.pairMap,
-        compList: compList
+        compList: compList,
+        // 手操抓克制：哪些队伍是专门盯着某一种队伍打的
+        snipers: compList.filter(function (c) { return c.sniper; }),
+        // 惯用阵型（按场次排序，用于习惯面板）
+        formations: Array.from(p.formationMap.entries())
+          .map(function (e) { return { name: e[0], n: e[1] }; })
+          .sort(function (a, b) { return b.n - a.n; }),
+        // 整体对手分布：他是不是整体上也在挑对手
+        foeStat: (function () {
+          let total = 0, topKey = '', topN = 0;
+          p.foeMap.forEach(function (v, k) {
+            total += v;
+            if (v > topN) { topN = v; topKey = k; }
+          });
+          return {
+            total: total, kinds: p.foeMap.size, topKey: topKey, topN: topN,
+            topDisplay: p.foeName.get(topKey) || topKey,
+            topShare: total ? topN / total : 0
+          };
+        })()
       };
     }).sort(function (a, b) { return b.n - a.n; });
 
@@ -319,17 +480,22 @@ window.AC = window.AC || {};
    */
   const CHAIN_GAP_MS = 10 * 60 * 1000;
 
-  /** cur 是否是 prev 这一段的续战：双方兵力都接得上，且时间没有倒挂 */
+  /**
+   * cur 是否是 prev 这一段的续战。
+   * 只看**我方**兵力：child 是我方同一支部队的续战段，而对手在同一波里可能换人
+   * （实测同一波续战里对手会从「诸葛亮/诸葛瑾/SP周瑜」换成「马腾/钟会/公孙瓒」），
+   * 再要求对方也首尾衔接会让该折叠的段折不起来。
+   * 另外战后伤兵会恢复，所以比对的是「开战兵力 = 上一段剩余 + 上一段伤兵」。
+   */
   function linked(prev, cur) {
     const gap = (cur.ts || 0) - (prev.ts || 0);
     if (gap < 0 || gap > CHAIN_GAP_MS) return false;
-    if (!prev.me || !cur.me || !prev.foe || !cur.foe) return false;
-    const ends = function (s) {
-      return s.origin !== null && s.origin !== undefined &&
-        s.remain !== null && s.remain !== undefined;
-    };
-    if (!ends(prev.me) || !ends(cur.me) || !ends(prev.foe) || !ends(cur.foe)) return false;
-    return cur.me.origin === prev.me.remain && cur.foe.origin === prev.foe.remain;
+    if (!prev.me || !cur.me) return false;
+    const s = prev.me;
+    if (s.origin === null || s.origin === undefined || s.remain === null || s.remain === undefined) return false;
+    if (cur.me.origin === null || cur.me.origin === undefined) return false;
+    const exp = (s.remain || 0) + (s.wounded || 0);
+    return Math.abs(cur.me.origin - exp) <= Math.max(50, exp * 0.005);
   }
 
   /**
@@ -380,7 +546,9 @@ window.AC = window.AC || {};
    * 战报浮层（玩家分析与同盟分析共用）
    * @param {Object} o {
    *   result, allBattles, keptIdSet,   // keptIdSet 缺省时按 result.battles 现算
-   *   playerName, comp                 // 要看的玩家与其某套阵容（需含 key / display / troopSig）
+   *   playerName, comp,                // 要看的玩家与其某套阵容（需含 key / display / troopSig）
+   *   title, subTitle,                 // 可选：自定义标题（连赢证据等场景）
+   *   gatherFn                         // 可选：自定义取数 (allBattles, kept, playerName, comp) => list
    * }
    */
   function openBattleLog(o) {
@@ -389,13 +557,27 @@ window.AC = window.AC || {};
     const playerName = o.playerName, comp = o.comp || { key: '', display: '' };
     const allBattles = (o.allBattles && o.allBattles.length) ? o.allBattles : (result.battles || []);
     const kept = o.keptIdSet || new Set((result.battles || []).map(function (b) { return b.id; }));
-    const list = collectBattles(allBattles, kept, playerName, comp)
+    const gather = typeof o.gatherFn === 'function' ? o.gatherFn : collectBattles;
+    let list = gather(allBattles, kept, playerName, comp)
       .sort(function (a, b) { return (b.ts || 0) - (a.ts || 0); });
+    // 只看某段时间内的交战（连赢证据用：那一波之间的战报，含夹在中间的败局）
+    if (o.range && (o.range.from || o.range.to)) {
+      list = list.filter(function (x) {
+        return (x.ts || 0) >= (o.range.from || 0) && (x.ts || 0) <= (o.range.to || Infinity);
+      });
+    }
     const hidden = list.filter(function (x) { return x.filtered; }).length;
-    // 渲染与分页以「一次完整战斗」为单位：续战的多段折叠成一组，默认只看最终结果
-    const chains = groupChains(list);
+    /* 与游戏内战报一致：**每一场一张卡**（打平续战也各占一场，不再折叠隐藏），
+       场号按**发生顺序**编（第 1 场 = 最早那场），列表从新到旧排列（最新的在最上面）。
+       之前是折叠 + 按显示顺序编号，于是「第 1 场」反而是最新的那场，和游戏对不上。 */
+    const asc = list.slice().sort(function (a, b) { return (a.ts || 0) - (b.ts || 0); });
+    asc.forEach(function (x, i) { x.__seqNo = i + 1; });
+    // 倒序显示；同一秒的两场按场号倒排，保证「新的在上」不会因稳定排序而颠倒
+    const shown = list.slice().sort(function (a, b) {
+      return ((b.ts || 0) - (a.ts || 0)) || ((b.__seqNo || 0) - (a.__seqNo || 0));
+    });
     let page = 0;
-    const totalPages = Math.max(1, Math.ceil(chains.length / BATT_PER_PAGE));
+    const totalPages = Math.max(1, Math.ceil(shown.length / BATT_PER_PAGE));
 
     const mask = U.el('div', { class: 'bl-mask' });
     const panel = U.el('div', { class: 'bl-panel' });
@@ -517,43 +699,14 @@ window.AC = window.AC || {};
 
     function renderPage() {
       body.innerHTML = '';
-      const slice = chains.slice(page * BATT_PER_PAGE, (page + 1) * BATT_PER_PAGE);
+      const slice = shown.slice(page * BATT_PER_PAGE, (page + 1) * BATT_PER_PAGE);
       if (!slice.length) {
         body.appendChild(U.el('div', { class: 'hint', text: '这套阵容没有可展示的对战记录。' }));
         return;
       }
-      slice.forEach(function (chain, i) {
-        const idx = page * BATT_PER_PAGE + i + 1;
-        // 单段：直接一张卡
-        if (chain.length === 1) {
-          body.appendChild(renderCard(chain[0], '第 ' + idx + ' 场'));
-          return;
-        }
-        // 多段（打平后续战）：折叠为一组，默认只显示最终结果
-        const box = U.el('div', { class: 'bl2-chain' });
-        const more = U.el('div', { class: 'bl2-chain-more' });
-        more.hidden = true;
-        // 展开区按「由新到旧」排列（与列表一致）；段号仍按发生顺序，第 1 段 = 最早
-        const rest = chain.slice(0, -1);
-        for (let j = rest.length - 1; j >= 0; j--) {
-          more.appendChild(renderCard(rest[j], '第 ' + (j + 1) + ' 段'));
-        }
-        const toggle = U.el('button', {
-          class: 'bl2-chain-toggle',
-          text: '展开其余 ' + (chain.length - 1) + ' 段',
-          onclick: function () {
-            more.hidden = !more.hidden;
-            toggle.textContent = more.hidden ? '展开其余 ' + (chain.length - 1) + ' 段' : '收起';
-          }
-        });
-        box.appendChild(U.el('div', { class: 'bl2-chain-bar' }, [
-          U.el('span', { class: 'bl2-chain-tag', text: '连续交战 ' + chain.length + ' 段' }),
-          U.el('span', { class: 'bl2-chain-note', text: '打平后续战，为同一次交战 · 下方默认显示最终结果' }),
-          toggle
-        ]));
-        box.appendChild(renderCard(chain[chain.length - 1], '第 ' + idx + ' 场（最终）'));
-        box.appendChild(more);
-        body.appendChild(box);
+      // 每场一张卡：卡上的场号用「发生顺序」（第 1 场 = 最早），与游戏内一致
+      slice.forEach(function (x) {
+        body.appendChild(renderCard(x, '第 ' + (x.__seqNo || 1) + ' 场'));
       });
     }
 
@@ -563,11 +716,9 @@ window.AC = window.AC || {};
         class: 'bl-btn', text: '上一页', disabled: page === 0 ? 'disabled' : null,
         onclick: function () { if (page > 0) { page--; renderPage(); renderPager(); } }
       }));
-      const folded = chains.length < list.length;
       pager.appendChild(U.el('span', {
         class: 'bl-page',
-        text: (page + 1) + ' / ' + totalPages + '  （' +
-          (folded ? '共 ' + chains.length + ' 次交战 · ' : '共 ') + list.length + ' 场' +
+        text: (page + 1) + ' / ' + totalPages + '  （共 ' + list.length + ' 场' +
           (hidden ? '，其中 ' + hidden + ' 场未通过当前筛选、不计入统计' : '') + '）'
       }));
       pager.appendChild(U.el('button', {
@@ -591,6 +742,8 @@ window.AC = window.AC || {};
       U.el('div', { class: 'bl2-sum' }, summary),
       U.el('button', { class: 'bl-close', text: '×', title: '关闭（Esc）', onclick: close })
     ]));
+    // 连赢证据等场景：在战报上方补一条说明（这一波是几连、累计武勋多少）
+    if (o.note) panel.appendChild(U.el('div', { class: 'bl-note' }, [U.el('span', { text: o.note })]));
     panel.appendChild(body);
     panel.appendChild(pager);
     mask.appendChild(panel);
@@ -607,6 +760,28 @@ window.AC = window.AC || {};
     box.appendChild(U.el('div', { class: 'pc-head' }, [
       U.el('div', { class: 'pc-name' }, [U.compWithTroop(c.display, c.troopSig)]),
       U.el('div', { class: 'pc-meta' }, [
+        /* 指向性标签：标签上的百分比一律是**打它的胜率**（克制口径），占比放进悬停说明，
+           免得把「50% 的场次在打它」误读成「对它胜率 50%」。 */
+        c.sniper ? U.el('span', {
+          class: 'pc-sniper kind-' + c.sniper.kind + (c.sniper.strong ? ' is-strong' : ''),
+          title: '这套队伍 ' + c.sniper.total + ' 场里有 ' + c.sniper.n + ' 场打的是「' + c.sniper.display +
+            '」（占它 ' + U.fmtPct(c.sniper.share, 0) + '），打它的胜率 ' + U.fmtPct(c.sniper.rate, 0) +
+            '，属于' + c.sniper.levelLabel +
+            (c.sniper.n < 12 ? '（样本只有 ' + c.sniper.n + ' 场，结论仅供参考）' : '') +
+            '；这 ' + c.sniper.n + ' 场里 ' + U.fmtPct(c.sniper.atkRatio, 0) + ' 是他主动进攻 —— ' +
+            (c.sniper.kind === 'counter'
+              ? (c.sniper.why === 'forced' ? '打它很稳，但他很少主动去挑，多半是对方撞上来吃亏'
+                : '专挑它、而且真打得过，是手操抓克制')
+              : c.sniper.kind === 'focus' ? '只是常打这一套，胜率上是均势，谈不上克制'
+                : (c.sniper.why === 'forced' ? '主要是被对方追着打，躲不掉，不是他在送'
+                  : '盯着一个克自己的队伍还主动去撞，更像刷分 / 做任务')),
+          text: (c.sniper.via === 'run'
+            ? '⚠ 抓克制 · 连打 ' + c.sniper.display + ' ' + c.sniper.n + ' 场'
+            : (c.sniper.kind === 'counter'
+              ? (c.sniper.strong ? '⚠ 抓克制 · 几乎只打 ' : '⚠ 手操抓克制 · 克 ')
+              : c.sniper.kind === 'focus' ? '常打 ' : '⚠ 送分 · 专撞 ') +
+              c.sniper.display + ' ' + U.fmtPct(c.sniper.rate, 0))
+        }) : null,
         U.el('span', { text: c.n + ' 场' }),
         U.el('span', { class: 'pc-wl', text: c.winLo + ' 胜 ' + (c.loss || 0) + ' 负' + (c.draw ? ' ' + c.draw + ' 平' : '') }),
         U.el('span', { style: { color: U.rateColor(c.rate) }, text: '胜率 ' + U.fmtPct(c.rate, 0) }),
@@ -878,7 +1053,18 @@ window.AC = window.AC || {};
           // 小样本保护：场次太少时胜率不可信，标出来
           p.n < 5 ? U.el('span', { class: 'ai-weak', text: '样本少' }) : null,
           U.el('span', { text: p.compList.length + ' 套队伍' }),
-          p.avgRed === null ? null : U.el('span', { text: '均红 ' + p.avgRed.toFixed(1) })
+          p.avgRed === null ? null : U.el('span', { text: '均红 ' + p.avgRed.toFixed(1) }),
+          // 列表就能看出这个人的指向性习惯；徽章文案按「是不是真克制」区分
+          (p.snipers && p.snipers.length) ? (function () {
+            const c = p.snipers.filter(function (x) { return x.sniper.kind === 'counter'; })[0] || p.snipers[0];
+            const s = c.sniper;
+            return U.el('span', {
+              class: 'ai-sniper kind-' + s.kind,
+              title: '他的 ' + c.display + ' 有 ' + U.fmtPct(s.share, 0) + ' 的场次在打「' + s.display +
+                '」，打它胜率 ' + U.fmtPct(s.rate, 0) + '（' + s.levelLabel + '）',
+              text: s.kind === 'counter' ? '⚠ 抓克制' : (s.kind === 'focus' ? '常打某队' : '⚠ 专撞被克队')
+            });
+          })() : null
         ])
       ]);
       item.addEventListener('click', function () { self.select(p.name); });
@@ -915,6 +1101,113 @@ window.AC = window.AC || {};
       })(), '放宽左侧筛选条件可看到')
     ]));
 
+    /* ---- 他的作战习惯（总结成「怎么应付他」） ---- */
+    const habitSec = section('他的作战习惯',
+      '从对手分布、出动时段、惯用阵型与队伍集中度看这个人怎么打，用来决定怎么应付他');
+    {
+      const T = function (s) { return U.el('span', { text: s }); };
+      const hl = function (s, cls) { return U.el('span', { class: cls || 'ac-strong', text: s }); };
+      const row = function (k, kids, cls) {
+        return U.el('div', { class: 'hb-row' + (cls ? ' ' + cls : '') }, [
+          U.el('b', { class: 'hb-k', text: k }),
+          U.el('span', { class: 'hb-v' }, kids)
+        ]);
+      };
+
+      // ① 指向性 × 胜率：真克制 / 只是常打 / 盯着被克的打，三种要分开说
+      if (p.snipers && p.snipers.length) {
+        // 优先展示「真抓克制」的那种；没有就展示最集中的那条
+        const counter = p.snipers.filter(function (c) { return c.sniper.kind === 'counter'; })[0] || p.snipers[0];
+        const s = counter.sniper;
+        // 成因：他主动去撞 vs 被对方追着打 —— 同样「专打某队」，含义完全不同
+        const why = s.why === 'self'
+          ? T('（这 ' + s.n + ' 场里 ' + U.fmtPct(s.atkRatio, 0) + ' 是他主动进攻，是自己找上门）')
+          : s.why === 'forced'
+            ? T('（这 ' + s.n + ' 场里只有 ' + U.fmtPct(s.atkRatio, 0) + ' 是他主动进攻，多半是被对方追着打，躲不掉）')
+            : T('（主动进攻占 ' + U.fmtPct(s.atkRatio, 0) + '，主动被动都有）');
+        const shrinkNote = s.n < 12 ? T('〔样本只有 ' + s.n + ' 场，结论仅供参考〕') : null;
+        const head = s.kind === 'counter'
+          ? [T('他的 '), hl(counter.display, 'ac-comp'), T(' 打 '), hl(s.display, 'ac-comp'),
+            T(' 很稳：这套 ' + s.total + ' 场里有 ' + s.n + ' 场打的是它（占 ' + U.fmtPct(s.share, 0) +
+              '），打它胜率 '), hl(U.fmtPct(s.rate, 0), 'ac-good'), T('（' + s.levelLabel + '）——' +
+              (s.why === 'forced'
+                ? '不过他很少主动去挑（只有 ' + U.fmtPct(s.atkRatio, 0) + ' 是主动进攻），更多是对方撞上来吃亏：你要出这套，得先想好怎么破它'
+                : '他会手动挑目标，别指望他"随便撞上你"')), why, shrinkNote]
+          : s.kind === 'focus'
+            ? [T('他的 '), hl(counter.display, 'ac-comp'), T(' 常打 '), hl(s.display, 'ac-comp'),
+              T('（' + s.n + '/' + s.total + ' 场），但打它只有 '), hl(U.fmtPct(s.rate, 0)), T('，属于' + s.levelLabel +
+                '——只是爱打这一套，不算克制；应对上按均势准备即可'), why, shrinkNote]
+            : [T('注意：他的 '), hl(counter.display, 'ac-comp'), T(' 有 ' + s.n + '/' + s.total + ' 场都在打 '),
+              hl(s.display, 'ac-comp'), T('，而打它只有 '), hl(U.fmtPct(s.rate, 0), 'ac-warn'),
+              T('（' + s.levelLabel + '）——' +
+                (s.why === 'forced' ? '但那是被对方追着打，不是他在送；把对方那套挡住就行' : '还在主动去撞，更像刷分 / 做任务')),
+              why, shrinkNote];
+        habitSec.appendChild(row(s.kind === 'counter' ? '⚠ 抓克制' : (s.kind === 'focus' ? '常打某队' : '⚠ 专撞被克队'), head,
+          s.kind === 'feeding' ? 'hb-sniper is-warn' : (s.kind === 'focus' ? '' : 'hb-sniper')));
+        const rest = p.snipers.filter(function (c) { return c !== counter; });
+        if (rest.length) {
+          habitSec.appendChild(row('还有', [
+            T(rest.slice(0, 4).map(function (c) {
+              return c.display + (c.sniper.kind === 'counter' ? ' 克 ' : (c.sniper.kind === 'focus' ? ' 常打 ' : ' 被克于 ')) +
+                c.sniper.display + '（' + U.fmtPct(c.sniper.rate, 0) + '）';
+            }).join('、'))
+          ]));
+        }
+      } else {
+        habitSec.appendChild(row('对手分布', [
+          T('没有"只打某一种队伍"的迹象，撞上谁打谁——应对上不用特意躲他的队伍')
+        ]));
+      }
+
+      // ② 主力队伍
+      const main = p.compList[0];
+      if (main) {
+        habitSec.appendChild(row('主力队伍', [
+          T('最常出 '), hl(main.display, 'ac-comp'),
+          T('（' + main.n + ' 场 · 占他 ' + U.fmtPct(main.n > 0 && p.n ? main.n / p.n : 0, 0) +
+            '，胜率 ' + U.fmtPct(main.rate, 0) + '）')
+        ]));
+      }
+
+      // ③ 整体对手集中度
+      const fs = p.foeStat;
+      if (fs && fs.total) {
+        habitSec.appendChild(row('对手面', [
+          T('一共打过 '), hl(String(fs.kinds)), T(' 种不同队伍；最集中的是对 '),
+          hl(fs.topDisplay, 'ac-comp'),
+          T('（' + fs.topN + '/' + fs.total + ' = ' + U.fmtPct(fs.topShare, 0) + '）' +
+            (fs.kinds <= 4 ? '——可选范围很窄，多半在盯特定目标' : '——面对的主流队伍比较杂'))
+        ]));
+      }
+
+      // ④ 惯用阵型
+      if (p.formations && p.formations.length) {
+        habitSec.appendChild(row('惯用阵型', [
+          T(p.formations.slice(0, 3).map(function (f) {
+            return f.name + ' ' + U.fmtPct(p.n ? f.n / p.n : 0, 0);
+          }).join(' · '))
+        ]));
+      }
+
+      // ⑤ 出动时段
+      if (p.peakHour) {
+        const hours = p.hours.filter(function (h) { return h.n > 0; })
+          .sort(function (a, b) { return b.n - a.n; })
+          .map(function (h) { return h.label + ' ' + U.fmtPct(p.hourTotal ? h.n / p.hourTotal : 0, 0); });
+        habitSec.appendChild(row('出动时段', [
+          T('主要在 '), hl(p.peakHour), T('（' + hours.slice(0, 2).join(' · ') + '）——错开这个时段，或者就在这个时段堵他')
+        ]));
+      }
+
+      // ⑥ 换队与养成
+      habitSec.appendChild(row('队伍与养成', [
+        T('一共用了 '), hl(p.compList.length + ' 套队伍'),
+        T((p.compList.length >= 6 ? '（换队很勤，按场次盯不过来的就抓他的主力那两套）' : '（队伍集中，针对他一两套即可）')),
+        p.avgRed === null ? null : T('；平均红度 ' + p.avgRed.toFixed(1))
+      ]));
+    }
+    host.appendChild(habitSec);
+
     /* ---- 各队伍的武将红度 ---- */
     const self = this;
     const s1 = section('各队伍的武将红度', '每套队伍里具体是哪几名武将、红度 / 品级 / 等级 / 装备战马各是什么水平');
@@ -943,7 +1236,8 @@ window.AC = window.AC || {};
         ]),
         U.el('div', {}, [
           T('拿 '), cmp(top.display), T(' 打他最稳：期望胜率 '),
-          hl(U.fmtPct(top.expRate), top.expRate >= 0.5 ? 'ac-good' : 'ac-warn'),
+          U.el('span', { style: { color: U.counterLevel(top.expRate).color }, text: U.fmtPct(top.expRate) }),
+          hl('（' + U.counterLevel(top.expRate).label + '）', 'ac-note'),
           T('，能对上他 '), hl(U.fmtPct(top.coverage, 0), 'ac-strong'),
           T(' 的出场（' + evidenceText(top) + '）')
         ])
@@ -1047,7 +1341,8 @@ window.AC = window.AC || {};
   AC.playerAnalysis = {
     build: build, heroSnapshots: heroSnapshots,
     HOUR_BANDS: HOUR_BANDS, hourBandOf: hourBandOf,
-    openBattleLog: openBattleLog,     // 同盟分析的玩家列表也复用这个战报浮层
+    openBattleLog: openBattleLog,
+    collectBattles: collectBattles,     // 同盟分析的玩家列表也复用这个战报浮层
     groupChains: groupChains          // 「打平续战」多段 -> 一次完整战斗（战报折叠与统计合并都靠它）
   };
 

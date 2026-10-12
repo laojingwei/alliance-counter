@@ -19,6 +19,8 @@ desktop.ini
 原始战报*.csv
 raw/
 private/
+# 用户导入的真实全量数据（50MB+，含真实玩家/同盟名）
+samples/real_*.csv
 # 页面「导出存档」产生的文件（含真实同盟/玩家名）
 战报累计存档_*.json
 *.battle-backup.json
