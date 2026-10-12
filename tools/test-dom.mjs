@@ -614,9 +614,25 @@ console.log('\n=== 玩家分析 ===');
   w.AC.app.switchView('players');
   const items = w.document.querySelectorAll('#playerList .ally-item').length;
   const txt = w.document.querySelector('#playerDetail').textContent;
-  const secs = ['各队伍的武将红度', '如何克制他', '针对他每套队伍的单点克制', '结论'];
+  const secs = ['各队伍的武将红度', '如何克制他', '针对他每套队伍的单点克制', '结论', '他的作战习惯'];
   const miss = secs.filter((t) => txt.indexOf(t) < 0);
   console.log('玩家列表项:', items, '| 详情区块齐全:', miss.length === 0 ? 'PASS' : 'FAIL 缺少 ' + miss.join('/'));
+  // 手操抓克制：习惯面板必须给出「哪套队伍专打哪套」的判断（命中对手集中度高的玩家才显示）
+  const view0 = w.AC.app.playerRef();
+  const sniperPlayers = (view0.data.players || []).filter((p) => p.snipers && p.snipers.length);
+  const listBadges = w.document.querySelectorAll('#playerList .ai-sniper').length;
+  // 挑一个「真克制」类型的玩家：只有它才用 hb-sniper 高亮行（focus 是普通行、feeding 用 is-warn）
+  const counterPlayer = sniperPlayers.filter((p) => p.snipers.some((c) => c.sniper.kind === 'counter'))[0] || sniperPlayers[0];
+  let sniperRow = false;
+  if (counterPlayer) {
+    view0.select(counterPlayer.name);
+    sniperRow = !!w.document.querySelector('#playerDetail .hb-sniper');
+  }
+  const kinds = { counter: 0, focus: 0, feeding: 0 };
+  sniperPlayers.forEach((p) => p.snipers.forEach((c) => { kinds[c.sniper.kind] = (kinds[c.sniper.kind] || 0) + 1; }));
+  console.log('手操抓克制：识别到', sniperPlayers.length, '名玩家 | 列表徽章', listBadges, '个 | 类型',
+    JSON.stringify(kinds), '| 习惯面板有抓克制行:', (!sniperPlayers.length || sniperRow) ? 'PASS' : 'FAIL');
+  if (sniperPlayers.length && !sniperRow) process.exitCode = 1;
 
   const view = w.AC.app.playerRef();
   const players = view.data.players;
@@ -696,11 +712,10 @@ console.log('\n=== 玩家分析 ===');
   const closeBtn = mask && mask.querySelector('.bl-close');
   if (closeBtn) closeBtn.click();
 
-  // ⑦ 「打平续战」的多段战报折叠为一次完整战斗（兵力首尾衔接识别）
+  // ⑦ 战报卡片：与游戏内一致 —— 每场一张卡、场号按发生顺序（第 1 场 = 最早）、列表从新到旧
   {
     const ACx = w.AC;
     const rr = ACx.app.state.result;
-    // 明细仍保留原始段（战报浮层负责折叠），统计口径则已在 analyze 里合并
     const all = ACx.app.store.battles;
     const buckets = new Map();
     all.forEach((b) => {
@@ -713,42 +728,40 @@ console.log('\n=== 玩家分析 ===');
         buckets.get(k).segs.push({ me: side, foe: role === 'atk' ? b.def : b.atk, ts: b.ts, place: b.place });
       });
     });
-    let hit = null, multiChains = 0;
-    buckets.forEach((v) => {
-      if (hit) return;
-      const cs = ACx.playerAnalysis.groupChains(v.segs);
-      if (cs.some((c) => c.length > 1)) { hit = v; multiChains = cs.filter((c) => c.length > 1).length; }
-    });
+    let hit = null;
+    buckets.forEach((v) => { if (!hit && v.segs.length >= 4) hit = v; });   // 挑一个有多场交战的玩家
     if (hit) {
       ACx.playerAnalysis.openBattleLog({
         result: rr, allBattles: all, playerName: hit.player,
         comp: { key: hit.key, display: hit.key, troopSig: '' }
       });
       const m = w.document.querySelector('.bl-mask');
-      const nChain = m ? m.querySelectorAll('.bl2-chain').length : 0;
-      const moreEls = m ? Array.prototype.slice.call(m.querySelectorAll('.bl2-chain-more')) : [];
-      const collapsed = moreEls.length > 0 && moreEls.every((e) => e.hidden);
-      console.log('续战折叠: 折叠组', nChain, '个（该玩家有', multiChains, '条链）| 默认收起:', collapsed ? 'PASS' : 'FAIL');
-      const t = m && m.querySelector('.bl2-chain-toggle');
-      if (t) t.click();
-      const opened = moreEls.length > 0 && !moreEls[0].hidden;
-      const restCards = m ? m.querySelectorAll('.bl2-chain-more .bl2-card').length : 0;
-      console.log('展开后显示其余段:', opened && restCards > 0 ? 'PASS' : 'FAIL', '| 其余段卡片', restCards);
-      // 展开区须由新到旧（与列表一致），段号仍按发生顺序
-      if (m) {
-        const ts = Array.prototype.slice.call(m.querySelectorAll('.bl2-chain-more .bl2-time'))
-          .map((e) => Date.parse(e.textContent.replace(/\//g, '-').replace(' ', 'T')));
-        const desc = ts.length < 2 || ts.every((v, i) => i === 0 || ts[i - 1] >= v);
-        const labels = Array.prototype.slice.call(m.querySelectorAll('.bl2-chain-more .bl2-seq'))
-          .map((e) => e.textContent);
-        const seqOk = labels.every((s, i) => s === '第 ' + (labels.length - i) + ' 段');
-        console.log('展开区由新到旧:', desc ? 'PASS' : 'FAIL', '| 段号按发生顺序:', seqOk ? 'PASS' : 'FAIL',
-          '|', labels.join(' , '));
-      }
+      const cards = m ? Array.prototype.slice.call(m.querySelectorAll('.bl2-card')) : [];
+      const seqs = cards.map((c) => {
+        const t = (c.querySelector('.bl2-seq') || {}).textContent || '';
+        const mm = t.match(/第 (\d+) 场/);
+        return mm ? Number(mm[1]) : NaN;
+      });
+      const times = cards.map((c) => {
+        const t = (c.querySelector('.bl2-time') || {}).textContent || '';
+        return Date.parse(t.replace(/\//g, '-').replace(' ', 'T'));
+      });
+      // ① 每场一张卡：卡片数 == 该玩家该阵容的场次数（本页范围内），不再折叠隐藏
+      const noFold = m ? m.querySelectorAll('.bl2-chain').length === 0 : false;
+      console.log('战报每场一张卡（不折叠隐藏）:', noFold ? 'PASS' : 'FAIL',
+        '| 卡片', cards.length, '| 该玩家场次', hit.segs.length);
+      // ② 场号按发生顺序：列表第一个（最新）场号最大，最后一个（最早）是第 1 场
+      const desc = times.every((v, i) => i === 0 || times[i - 1] >= v);
+      const seqOrdered = seqs.length > 0 && seqs.every((s, i) => s === seqs.length - i);
+      const firstIsOldest = seqs.length > 0 && seqs[seqs.length - 1] === 1;
+      console.log('战报列表从新到旧:', desc ? 'PASS' : 'FAIL',
+        '| 场号按发生顺序（第 1 场最早）:', seqOrdered && firstIsOldest ? 'PASS' : 'FAIL',
+        '| 场号', seqs.join(','));
+      if (!noFold || !desc || !seqOrdered || !firstIsOldest) process.exitCode = 1;
       const cb2 = m && m.querySelector('.bl-close');
       if (cb2) cb2.click();
     } else {
-      console.log('续战折叠: (本数据没有续战链)');
+      console.log('战报每场一张卡: (本数据没有足够的交战样本)');
     }
   }
 
@@ -778,6 +791,168 @@ console.log('\n=== 玩家分析 ===');
   }
 }
 
+// 强度排行口径：强度分 = 公平压制力 + 打斗广度
+// 综合强度排行：五维分项 + 强度分降序 + 底部口径说明（用户要求「一眼看出这队强」）
+{
+  const d = w.document;
+  const res = w.AC.app.state.result;
+  const rows = Array.from(d.querySelectorAll('#rankWrap .rank-row'));
+  const bodyRows = rows.slice(1);   // 第一行是表头
+  const sorted = bodyRows.slice().sort((a, b) => b.__node.strength - a.__node.strength);
+  console.log('[dbg-jsdom]', JSON.stringify({ totalKept: res.stats.totalKept, nodes: res.nodeList.length, best: bodyRows[0].__node.streakBest, sStreak: bodyRows[0].__node.sStreak, strength: bodyRows[0].__node.strength, bestAll: bodyRows[0].__node.streakBestAll }));
+  console.log('强度排行：行数', bodyRows.length,
+    '| 首行', bodyRows[0].__node.display,
+    '综合 ' + bodyRows[0].__node.strength.toFixed(1),
+    '（打击面 ' + bodyRows[0].__node.sSpan.toFixed(0) + ' 胜率 ' + bodyRows[0].__node.sWin.toFixed(0) +
+    ' 连胜 ' + bodyRows[0].__node.sStreak.toFixed(0) + ' 战损 ' + bodyRows[0].__node.sLoss.toFixed(0) +
+    ' 劣势 ' + bodyRows[0].__node.sDis.toFixed(0) + '）');
+
+  // 表头写明综合口径
+  const headTxt = rows[0].textContent;
+  const headOk = headTxt.indexOf('强度分') >= 0 && headTxt.indexOf('打击面') >= 0 && headTxt.indexOf('连胜') >= 0;
+  console.log('排行表头写明「强度分 + 五维」:', headOk ? 'PASS' : 'FAIL', '|', headTxt.replace(/\s+/g, ' ').trim().slice(0, 70));
+  if (!headOk) process.exitCode = 1;
+
+  // 每行五个分项条 + 数字，界面值必须与节点一致
+  const PARTS = ['sSpan', 'sWin', 'sStreak', 'sLoss', 'sDis'];
+  const partsOk = bodyRows.every((r) => {
+    const nodes = Array.from(r.querySelectorAll('.rank-parts .rp'));
+    if (nodes.length !== 5) return false;
+    return nodes.every((el, i) => {
+      const num = el.querySelector('.rp-num').textContent;
+      const bar = el.querySelector('.rp-bar i');
+      const expect = Math.round(Math.min(100, Math.max(0, r.__node[PARTS[i]] || 0)));
+      return Number(num) === expect && bar && /width:\s*\d/.test(bar.getAttribute('style') || '');
+    });
+  });
+  console.log('每行五维分项条（打击面/胜率/连胜/战损/劣势）与节点数据一致:', partsOk ? 'PASS' : 'FAIL');
+  if (!partsOk) process.exitCode = 1;
+
+  // 行内自带关键数字：赢过 N/M、最长 N 连、连赢率
+  const rowSelfOk = bodyRows.every((r) => {
+    const m = r.textContent.match(/最高 (\d+) 连/);
+    const k = r.textContent.match(/3 连以上 (\d+) 次/);
+    return /\d+\/\d+ 支/.test(r.textContent) && m && k &&
+      Number(m[1]) === (r.__node.streakBest || 0) && Number(k[1]) === (r.__node.streakStrong || 0) &&
+      /场 · \d+%/.test(r.textContent);
+  });
+  console.log('行内自带出场/胜率/赢过支数/最高连赢:', rowSelfOk ? 'PASS' : 'FAIL');
+  if (!rowSelfOk) process.exitCode = 1;
+
+  // 排序：按综合强度分降序
+  const orderOk = bodyRows.every((r, i) => r === sorted[i]);
+  console.log('排行按综合强度分降序:', orderOk ? 'PASS' : 'FAIL',
+    bodyRows.length ? ('（' + bodyRows[0].__node.strength.toFixed(1) + ' -> ' +
+      bodyRows[bodyRows.length - 1].__node.strength.toFixed(1) + '）') : '');
+  if (!orderOk) process.exitCode = 1;
+
+  // 行上不挂 title：划过就弹原生提示框会挡住整片排行
+  const noTipOk = bodyRows.every((r) => !r.getAttribute('title'));
+  console.log('排行行不弹悬浮提示框（无 title）:', noTipOk ? 'PASS' : 'FAIL');
+  if (!noTipOk) process.exitCode = 1;
+
+  // 底部口径说明必须存在（玩家看完排行会问「这分怎么来的」）
+  const note = d.querySelector('#rankWrap .rank-note');
+  const noteOk = !!note && note.textContent.indexOf('打击面') >= 0 && note.textContent.indexOf('连胜') >= 0 &&
+    note.textContent.indexOf('32%') >= 0;
+  console.log('排行底部给出强度分口径（含权重）:', noteOk ? 'PASS' : 'FAIL');
+  if (!noteOk) process.exitCode = 1;
+
+  // 详情面板：五维拆解 + 连胜口径 + 战损/劣势
+  bodyRows[0].dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+  const inspTxt = d.querySelector('#inspector').textContent;
+  const inspOk = inspTxt.indexOf('强度分拆解') >= 0 && inspTxt.indexOf('打击面') >= 0 &&
+    inspTxt.indexOf('最高连赢') >= 0 && inspTxt.indexOf('战损') >= 0 && inspTxt.indexOf('劣势') >= 0 &&
+    inspTxt.indexOf('以少打多') >= 0;
+  console.log('详情面板显示五维拆解 / 连胜 / 战损 / 劣势:', inspOk ? 'PASS' : 'FAIL');
+  if (!inspOk) process.exitCode = 1;
+
+  // 连赢证据：排行里的「最高 N 连」可点开战报；详情页有按钮 + 段落列表
+  const streakLinks = d.querySelectorAll('#rankWrap .rank-streak-link').length;
+  const evBtn = d.querySelector('#inspector .streak-evidence button');
+  const runRows = d.querySelectorAll('#inspector .streak-run-row').length;
+  console.log('连赢证据入口：排行可点链接', streakLinks, '个 | 详情按钮', evBtn ? 'PASS' : 'FAIL', '| 段落行', runRows);
+  if (!streakLinks && !evBtn) process.exitCode = 1;
+  // 点开战报浮层（会复用玩家分析的浮层）
+  if (evBtn) {
+    evBtn.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+    await new Promise((r2) => setTimeout(r2, 200));
+    const panel = d.querySelector('.bl-panel');
+    const note = panel ? (panel.querySelector('.bl-note') || {}).textContent || '' : '';
+    const cards = panel ? panel.querySelectorAll('.bl2-card').length : 0;
+    const ok = !!panel && cards > 0 && note.indexOf('连赢') >= 0;
+    console.log('点「查看连赢战报」弹出战报浮层:', ok ? 'PASS' : 'FAIL',
+      '| 卡片', cards, '| 说明', note.slice(0, 40));
+    if (!ok) process.exitCode = 1;
+    const closeBtn = panel && panel.querySelector('.bl-close');
+    if (closeBtn) closeBtn.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+  }
+
+  // 阵型站位：武将按「从左到右」填充（跨前后排、不看兵种），依赖格子的列/排标记
+  const recBtn = Array.from(d.querySelectorAll('#inspector button')).find((b) => /推荐配置/.test(b.textContent));
+  if (recBtn) {
+    recBtn.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+    await new Promise((r2) => setTimeout(r2, 350));
+    const slots = Array.from(d.querySelectorAll('.fm-slot'));
+    const withAttrs = slots.filter((x) => x.getAttribute('data-c') && x.getAttribute('data-r'));
+    const boards = d.querySelectorAll('.fm-board').length;
+    const ok = slots.length === 0 || withAttrs.length === slots.length;
+    console.log('阵型站位格子（' + boards + ' 块板 / ' + slots.length + ' 格）带列排标记:', ok ? 'PASS' : 'FAIL');
+    if (!ok) process.exitCode = 1;
+    // 每块板里的第一个武将必须是「最左列」那个格子
+    const filledBoards = Array.from(d.querySelectorAll('.fm-board')).map((bd) =>
+      Array.from(bd.querySelectorAll('.fm-slot.filled')).map((x) => ({
+        c: Number(x.getAttribute('data-c')), hero: ((x.querySelector('.hc-hero-name') || {}).textContent || '').trim()
+      })).filter((x) => x.hero));
+    const firstLeftmost = filledBoards.filter((cells) => cells.length).every((cells) => {
+      const minC = Math.min.apply(null, cells.map((x) => x.c));
+      const domFirst = cells[0];
+      return domFirst.c === minC;
+    });
+    console.log('每块阵型板的首个武将都在最左列:', firstLeftmost ? 'PASS' : 'FAIL');
+    if (!firstLeftmost) process.exitCode = 1;
+    const closeBtn = d.querySelector('.bl-close');
+    if (closeBtn) closeBtn.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+  }
+
+  // analyzer 的口径函数必须和节点字段一致（graph.js 的 3D 高度也读它）
+  const offOk = res.nodeList.every((n) => w.AC.analyzer.strengthOf(n) === n.strength);
+  console.log('analyzer.strengthOf 与节点强度分一致（3D 高度同源）:', offOk ? 'PASS' : 'FAIL');
+  if (!offOk) process.exitCode = 1;
+}
+
+// 图例：挤在标签栏右侧，太长的文案会被裁掉——只留短标签，完整口径放 title
+{
+  const d = w.document;
+  const legend = d.querySelector('#legend');
+  const legendText = legend ? legend.textContent.replace(/\s+/g, ' ').trim() : '(缺失)';
+  const legendShortOk = legendText.indexOf('3D 高度 = 强度分') >= 0 && legendText.indexOf('打斗广度') < 0;
+  console.log('图例用短标签（完整口径在悬浮）:', legendShortOk ? 'PASS' : 'FAIL', '|', legendText);
+  if (!legendShortOk) process.exitCode = 1;
+
+  // 标签栏放不下时的降级必须写在 CSS 里：标签横向滚动、图例次要项逐级收起、窄屏整体隐藏。
+  // jsdom 不做布局，这里直接盯 CSS 规则，避免以后又改回「被 overflow:hidden 硬裁」。
+  const css = fs.readFileSync(path.join(root, 'css/style.css'), 'utf8');
+  const scrollOk = /\.view-tabs\s*\{[^}]*overflow-x:\s*auto/.test(css);
+  const hideExtraOk = /@media[^{]*\{[^@]*\.legend \.legend-extra\s*\{\s*display:\s*none/.test(css);
+  const hideAllOk = /@media[^{]*\{[^@]*\.legend\s*\{\s*display:\s*none/.test(css);
+  console.log('窄屏降级规则（标签横滚 / 图例次要项收起 / 图例整体隐藏）:',
+    scrollOk ? 'PASS' : 'FAIL', hideExtraOk ? 'PASS' : 'FAIL', hideAllOk ? 'PASS' : 'FAIL');
+  if (!scrollOk || !hideExtraOk || !hideAllOk) process.exitCode = 1;
+
+  // 排行 7 列要能在 1366 这类窄屏里放得下：列宽之和 + 间距 + 内边距 + 滚动条 <= 1366 - 左侧栏(300)
+  const grid = (css.match(/\.rank-row\s*\{[^}]*grid-template-columns:([^;]+);/) || [])[1] || '';
+  const nums = (grid.match(/(\d+)px/g) || []).map((s) => parseInt(s, 10));
+  const minSum = nums.reduce((a, b) => a + b, 0);
+  const gapMatch = css.match(/\.rank-row\s*\{[^}]*gap:\s*(\d+)px/) || [];
+  const gap = Number(gapMatch[1] || 0);
+  const est = minSum + gap * 6 + 20 /* padding */ + 8 /* 滚动条 */;
+  const widthOk = nums.length >= 7 && est <= 1066;
+  console.log('排行列宽在 1366 窄屏下不溢出:', widthOk ? 'PASS' : 'FAIL',
+    '| 最小列宽合计 ' + minSum + 'px + 间距/内边距 ≈ ' + est + 'px（可用 ≈ 1066px）');
+  if (!widthOk) process.exitCode = 1;
+}
+
 // 版本号一致性：version.json 是唯一配置源，靠 tools/bump-version.mjs 同步到三处；
 // 任何一处漏同步都会让页面显示旧版本或拿到旧缓存，这里全部盯住
 {
@@ -801,6 +976,19 @@ console.log('\n=== 玩家分析 ===');
   console.log('index.html 缓存参数统一:', vsOk ? 'PASS' : 'FAIL', vs.join(' / '), 'vs', ver.version);
   console.log('index.html 引用了 version.js:', html.indexOf('js/version.js') >= 0 ? 'PASS' : 'FAIL');
   if (!ok || !vsOk || vjs.version !== ver.version) process.exitCode = 1;
+}
+
+// 启动加载提示：数据就绪后必须撤下（否则会挡住整个页面），且注册函数必须存在
+{
+  const hasFn = typeof w.__bootReady === 'function';
+  const gone = !w.document.getElementById('bootLoading');
+  console.log('启动加载提示: 注册函数', hasFn ? 'PASS' : 'FAIL', '| 数据就绪后已撤下:', gone ? 'PASS' : 'FAIL');
+  // 内联提示必须零依赖（不能引用外部 css/js），否则慢加载时根本出不来
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const blk = (html.match(/<div id="bootLoading"[^>]*>/) || [''])[0];
+  const inline = /style="/.test(blk) && html.indexOf('id="bootTime"') >= 0;
+  console.log('启动提示零依赖（内联样式 + 计时）:', inline ? 'PASS' : 'FAIL');
+  if (!hasFn || !gone || !inline) process.exitCode = 1;
 }
 
 console.log('\n=== JS 错误 ===');

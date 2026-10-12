@@ -228,19 +228,33 @@ input[type=range]:disabled::-moz-range-thumb { background: #4a5876; cursor: not-
   box-shadow: var(--shadow); overflow: hidden;
 }
 
-.view-tabs { display: flex; align-items: center; gap: 4px; padding: 8px 10px; border-bottom: 1px solid var(--line); overflow: hidden; }
+.view-tabs { display: flex; align-items: center; gap: 3px; padding: 8px 8px; border-bottom: 1px solid var(--line); overflow: hidden; }
 .tabs-spacer { flex: 1; min-width: 8px; }
 
 .tab {
   flex: none; white-space: nowrap;
   border: none; background: transparent; color: var(--text-dim);
-  padding: 7px 11px; border-radius: 8px; cursor: pointer; font-size: 12.5px; transition: .18s;
+  padding: 6px 9px; border-radius: 8px; cursor: pointer; font-size: 12.5px; transition: .18s;
 }
 .tab:hover { color: var(--text); background: rgba(78, 168, 255, .1); }
 .tab.active { color: #fff; background: rgba(78, 168, 255, .18); box-shadow: inset 0 0 0 1px rgba(78, 168, 255, .35); }
 
 .legend { display: flex; align-items: center; gap: 12px; font-size: 11.5px; color: var(--text-dim); min-width: 0; overflow: hidden; }
 .legend-item { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+
+/* 标签栏宽度不够时：标签保持完整并允许横向滚动，图例逐级让位。
+   1530px 以下 9 个标签就要 660px 以上，留着图例会把右侧标签压到滚动区外、看着像「标签没显示全」，
+   而这个宽度是常见的笔记本窗口，所以这里直接收起图例（完整口径在「显示」面板的提示里）。 */
+.view-tabs { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.view-tabs::-webkit-scrollbar { height: 0; }
+.legend { flex: none; }
+@media (max-width: 1720px) {
+  .legend .legend-extra { display: none; }
+  .legend { gap: 8px; }
+}
+@media (max-width: 1530px) {
+  .legend { display: none; }
+}
 .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
 .legend-bar { width: 56px; height: 8px; border-radius: 4px; background: linear-gradient(90deg, var(--cool), #6b7896, var(--hot)); }
 
@@ -285,13 +299,15 @@ canvas { display: block; width: 100%; height: 100%; }
 }
 
 /* ---------------- 强度排行 ---------------- */
-.rank-wrap { position: absolute; inset: 0; overflow-y: auto; padding: 14px 16px 24px; }
+.rank-wrap { position: absolute; inset: 0; overflow-y: auto; padding: 14px 16px 24px; contain: layout; }
 .rank-wrap::-webkit-scrollbar { width: 8px; }
 .rank-wrap::-webkit-scrollbar-thumb { background: #26334f; border-radius: 8px; }
 
+/* 列宽要能在 1366 这类窄屏里完整放下：minmax 压到刚好够读，
+   否则最右侧的列会被挤出可视区（row 本身不换行、也不横向滚动） */
 .rank-row {
-  display: grid; grid-template-columns: 30px minmax(140px, 1.3fr) 150px minmax(96px, 1.8fr) 54px 64px 54px;
-  align-items: center; gap: 10px;
+  display: grid; grid-template-columns: 26px minmax(96px, 1.1fr) 124px minmax(268px, 2fr) 84px 92px 92px;
+  align-items: center; gap: 8px;
   padding: 7px 10px; margin-bottom: 5px;
   background: rgba(22, 32, 58, .6);
   border: 1px solid var(--line-soft); border-radius: 9px;
@@ -304,11 +320,41 @@ canvas { display: block; width: 100%; height: 100%; }
 
 .rank-idx { font-weight: 700; color: var(--text-faint); font-variant-numeric: tabular-nums; text-align: center; }
 .rank-name { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rank-bar { position: relative; height: 8px; background: #1b2540; border-radius: 5px; overflow: hidden; }
+.rank-score { min-width: 0; }
+.rank-bar { position: relative; height: 7px; background: #1b2540; border-radius: 5px; overflow: hidden; }
 .rank-bar i { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 5px; transition: width .6s cubic-bezier(.2,.8,.2,1); }
+
+/* 五维分项条：打击面 / 胜率 / 连胜 / 战损 / 劣势，各一根迷你条 + 分数 */
+.rank-parts { display: flex; gap: 6px; margin-top: 4px; }
+.rank-parts .rp { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.rank-parts .rp-label { font-size: 9.5px; line-height: 1.1; color: #7f90ad; white-space: nowrap; overflow: hidden; }
+.rank-parts .rp-bar { display: block; height: 4px; background: #1b2540; border-radius: 3px; overflow: hidden; }
+.rank-parts .rp-bar i { display: block; height: 100%; border-radius: 3px; transition: width .5s ease; }
+.rank-parts .rp-num { font-size: 9.5px; line-height: 1.1; color: #a8b6cc; font-variant-numeric: tabular-nums; }
 .rank-val { font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; color: var(--text-dim); }
-.rank-fair { display: inline-block; margin-left: 7px; font-weight: 700; }
+.rank-fair { display: block; margin-left: 0; font-weight: 700; }
 .rank-fair.off { color: #5d6f8f; font-weight: 400; font-size: 11px; }
+/* 底部口径说明 */
+.rank-note { margin-top: 10px; padding: 9px 11px; font-size: 11.5px; line-height: 1.7; color: #8fa3c4;
+  background: rgba(22, 32, 58, .45); border: 1px solid var(--line-soft); border-radius: 9px; }
+.rank-note b { color: #c9d6ea; }
+
+/* ---------------- 连赢证据（详情页） ---------------- */
+.streak-evidence { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.streak-evidence .insp-btn-tip { font-size: 11.5px; color: #8fa3c4; }
+.btn-xs { padding: 3px 8px !important; font-size: 11px !important; }
+.streak-runs { margin-top: 10px; }
+.streak-run-list { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.streak-run-row {
+  display: grid; grid-template-columns: minmax(60px, 1.3fr) 52px minmax(120px, 1.6fr) auto;
+  align-items: center; gap: 8px;
+  padding: 4px 8px; border-radius: 7px;
+  background: rgba(22, 32, 58, .55); border: 1px solid var(--line-soft);
+  font-size: 11.5px; color: #a8b6cc;
+}
+.streak-run-row .run-player { color: #c9d6ea; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.streak-run-row .run-len { color: #ff9f7a; font-weight: 700; }
+.streak-run-row .run-wuxun { color: #8fa3c4; font-variant-numeric: tabular-nums; text-align: right; }
 
 /* ---------------- 数据表 ---------------- */
 .table-wrap { position: absolute; inset: 0 0 40px 0; overflow: auto; }
@@ -1330,3 +1376,49 @@ details.fold > .fold-summary + * { margin-top: 0; }
 .vs-more { display: block; width: 100%; margin-top: 6px; padding: 4px 8px; font-size: 11px;
   color: #8fa3c4; background: #101a2e; border: 1px dashed #22304d; border-radius: 5px; cursor: pointer; }
 .vs-more:hover { color: #dbe7ff; border-color: #3b82f6; }
+/* 战报浮层顶部的场景说明（如连赢证据） */
+.bl-note { padding: 8px 14px; font-size: 12px; line-height: 1.6; color: #c9d6ea;
+  background: rgba(78, 168, 255, .1); border-bottom: 1px solid var(--line-soft); }
+
+/* 排行里的「最高 N 连」：可直接点开那段连赢的战报 */
+.rank-streak-link { cursor: pointer; border-bottom: 1px dotted #5d6f8f; }
+.rank-streak-link:hover { color: #ff9f7a; border-bottom-color: #ff9f7a; }
+
+/* 连赢成色不足等提示：黄底一行，避免玩家被漂亮的连赢数字骗 */
+.fs-warn { margin-top: 6px; padding: 6px 9px; font-size: 11.5px; line-height: 1.6; color: #ffd8a8;
+  background: rgba(255, 170, 60, .12); border: 1px solid rgba(255, 170, 60, .35); border-radius: 7px; }
+
+/* ---------------- 手操抓克制标签 + 作战习惯面板 ---------------- */
+.pc-sniper { display: inline-flex; align-items: center; gap: 3px; padding: 1px 7px; border-radius: 999px;
+  font-size: 11px; font-weight: 700; color: #ffd8a8; background: rgba(255, 170, 60, .16);
+  border: 1px solid rgba(255, 170, 60, .45); cursor: help; }
+.pc-sniper.is-strong { color: #ffb0a0; background: rgba(255, 100, 80, .18); border-color: rgba(255, 110, 90, .5); }
+.ai-sniper { display: inline-block; margin-left: 4px; padding: 0 6px; border-radius: 999px; font-size: 10.5px;
+  font-weight: 700; color: #ffd8a8; background: rgba(255, 170, 60, .18); border: 1px solid rgba(255, 170, 60, .4); }
+.hb-row { display: flex; gap: 8px; align-items: baseline; padding: 5px 0; border-bottom: 1px dashed var(--line-soft);
+  font-size: 12.5px; line-height: 1.65; color: #a8b6cc; }
+.hb-row:last-child { border-bottom: none; }
+.hb-row .hb-k { flex: none; width: 74px; color: #8fa3c4; font-weight: 600; }
+.hb-row .hb-v { flex: 1 1 auto; min-width: 0; }
+.hb-row.hb-sniper { background: rgba(255, 170, 60, .08); border-radius: 7px; padding: 6px 8px; margin: 2px 0; }
+.hb-row.hb-sniper .hb-k { color: #ffb87a; }
+
+/* 指向性标签按「真克制 / 只是常打 / 盯着被克队打」三种区分配色 */
+.pc-sniper.kind-counter { color: #ffb0a0; background: rgba(255, 100, 80, .18); border-color: rgba(255, 110, 90, .5); }
+.pc-sniper.kind-focus { color: #a8c4e8; background: rgba(120, 160, 220, .14); border-color: rgba(120, 160, 220, .38); }
+.pc-sniper.kind-feeding { color: #ffd8a8; background: rgba(255, 170, 60, .16); border-color: rgba(255, 170, 60, .45); }
+.ai-sniper.kind-counter { color: #ffb0a0; background: rgba(255, 100, 80, .18); border-color: rgba(255, 110, 90, .5); }
+.ai-sniper.kind-focus { color: #a8c4e8; background: rgba(120, 160, 220, .14); border-color: rgba(120, 160, 220, .38); }
+.ai-sniper.kind-feeding { color: #ffd8a8; background: rgba(255, 170, 60, .16); border-color: rgba(255, 170, 60, .45); }
+.hb-row.hb-sniper.is-warn { background: rgba(255, 170, 60, .08); }
+.hb-row.hb-sniper.is-warn .hb-k { color: #ffb87a; }
+
+/* ---------------- 全局忙碌遮罩（导入 / 解析大文件） ---------------- */
+.busy-mask { position: fixed; inset: 0; z-index: 9998; display: flex; align-items: center; justify-content: center;
+  background: #0a11206b; -webkit-backdrop-filter: blur(7px); backdrop-filter: blur(7px); }
+.busy-box { text-align: center; color: #c9d6ea; text-shadow: 0 1px 4px rgba(0, 0, 0, .95), 0 0 14px rgba(10, 17, 32, .95); }
+.busy-spin { width: 34px; height: 34px; margin: 0 auto 14px; border: 3px solid #1e2a44; border-top-color: #4ea8ff;
+  border-radius: 50%; animation: acBusySpin .9s linear infinite; }
+.busy-title { font-size: 15px; color: #ffffff; font-weight: 600; }
+.busy-tip { font-size: 12px; margin-top: 6px; color: #c9d6ea; }
+@keyframes acBusySpin { to { transform: rotate(360deg); } }

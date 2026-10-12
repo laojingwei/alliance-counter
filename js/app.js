@@ -19,7 +19,7 @@ window.AC = window.AC || {};
     minAppear: 3,
     minLevel: 40,
     onlyFull: true,
-    onlyForceParity: true,  // 只看双方总兵力接近的对局
+    onlyForceParity: true,  // 只看双方总兵力接近的对局（关掉才有「以少打多」样本，劣势分才有意义）
     forceParityGap: 3000,   // 兵力差距阈值
     excludeMirror: true,
     excludeDraw: false,
@@ -50,7 +50,8 @@ window.AC = window.AC || {};
     table = new AC.Table($('#dataTable'), $('#tablePager'));
 
     rank = new AC.Rank($('#rankWrap'), {
-      onSelect: function (sel) { selectNode(sel.id, true); }
+      onSelect: function (sel) { selectNode(sel.id, true); },
+      onStreakLog: function (node, run) { openStreakLog(node, run); }
     });
 
     allianceView = new AC.AllianceView($('#allyList'), $('#allyDetail'), {
@@ -257,7 +258,7 @@ window.AC = window.AC || {};
         const hint = $('#graphModeHint');
         if (hint) {
           hint.textContent = mode === '3d'
-            ? '左键拖动旋转视角 · 右键拖动平移画布 · 滚轮缩放 · 高度 = 净压制力'
+            ? '左键拖动旋转视角 · 右键拖动平移画布 · 滚轮缩放 · 高度 = 强度分（公平压制力 + 打赢面）'
             : '2D 更适合看清克制关系';
         }
       });
@@ -270,30 +271,115 @@ window.AC = window.AC || {};
     // 默认展示内置数据；?restore=1 时改为载入上次存档。
     // 载入内置前先把上次存档挪到备份键，避免覆盖用户的数据。
     const params = new URLSearchParams(location.search);
+    if (params.get('demo') === '1') {
+      /* ?demo=1 才自动载入内置示例。示例是 12MB 的 sample-data.js，改为**动态拉取**：
+         以前它在 index.html 里同步加载，首屏要先下完这 12MB 才能跑起来，
+         在 GitHub Pages 这类慢网络上要几十秒，启动遮罩根本等不到，
+         用户就看到了「还没有数据」的空页面。 */
+      loadSampleData(function () {
+        if (AC.sampleCsv) {
+          store.stash();
+          ingest(AC.sampleCsv, '示例战报表（内置）', true);
+        }
+        bootFinish();
+      });
+      return;
+    }
     if (params.get('restore') === '1') {
-      const r = store.restorePrev();
-      if (r.ok) {
+      Promise.resolve(store.restorePrev()).then(function (r) {
+        if (r && r.ok) {
+          renderBatches();
+          recompute(true);
+          U.toast('已载入上次的数据：' + r.n + ' 场 / ' + r.batches + ' 份表。');
+        } else {
+          U.toast('没有找到上次的数据。', 'warn');
+        }
+        bootFinish();
+      });
+      return;
+    }
+    /* 默认路径：自动恢复上次的存档（IndexedDB 优先，回退 localStorage）。
+       以前刷新后什么都不恢复，用户每次都得重新导入——那正是「本地存储写入失败」的连带体验问题。 */
+    Promise.resolve(store.load()).then(function () {
+      if (store.battles.length) {
         renderBatches();
         recompute(true);
-        U.toast('已载入上次的数据：' + r.n + ' 场 / ' + r.batches + ' 份表。');
-      } else {
-        U.toast('没有找到上次的数据。', 'warn');
+        U.toast('已自动载入上次的数据：' + store.battles.length + ' 场 / ' + store.batches.length + ' 份表。', 'ok', 4200);
       }
-    } else if (AC.sampleCsv) {
-      store.stash();
-      ingest(AC.sampleCsv, '示例战报表（内置）', true);
-    }
-    if (params.get('view')) switchView(params.get('view'));
-    if (params.get('topn')) {
-      filters.topN = Number(params.get('topn')) || filters.topN;
-      syncControls();
-      recompute();
-    }
+      bootFinish();
+    });
+    return;
 
-    if (!store.battles.length) {
-      $('#graphEmpty').style.display = 'flex';
-      U.toast('还没有数据。拖入战报 CSV，或点击「载入示例表」快速体验动画效果。', '', 5200);
+    /** 首屏收尾：处理 URL 参数、空数据提示，并撤掉启动遮罩 */
+    function bootFinish() {
+      if (params.get('view')) switchView(params.get('view'));
+      if (params.get('topn')) {
+        filters.topN = Number(params.get('topn')) || filters.topN;
+        syncControls();
+        recompute();
+      }
+      if (!store.battles.length) {
+        $('#graphEmpty').style.display = 'flex';
+        U.toast('还没有数据。拖入战报 CSV，或点击「载入示例表」快速体验动画效果。', '', 5200);
+      }
+      // 首屏数据就绪：撤掉 index.html 里的启动加载提示
+      if (window.__bootReady) window.__bootReady();
     }
+  }
+
+  /* ---------------- 忙碌遮罩 ----------------
+     下载 / 解析大文件都是重活：解析是同步的，会把主线程占住几百毫秒到几秒。
+     所以必须先让遮罩画出来（nextPaint 让出一次主线程），再开始干活，
+     否则遮罩根本没机会渲染，用户看到的就是「点了没反应」。 */
+  let busyMask = null, busyTitle = null, busyTip = null;
+  function showBusy(title, tip) {
+    if (busyMask) { setBusy(title, tip); return; }
+    busyTitle = U.el('div', { class: 'busy-title', text: title || '处理中…' });
+    busyTip = U.el('div', { class: 'busy-tip', text: tip || '' });
+    busyMask = U.el('div', { class: 'busy-mask' }, [
+      U.el('div', { class: 'busy-box' }, [
+        U.el('div', { class: 'busy-spin' }),
+        busyTitle,
+        busyTip
+      ])
+    ]);
+    document.body.appendChild(busyMask);
+  }
+  function setBusy(title, tip) {
+    if (busyTitle && title) busyTitle.textContent = title;
+    if (busyTip && tip !== undefined) busyTip.textContent = tip;
+  }
+  function hideBusy() {
+    if (busyMask && busyMask.parentNode) busyMask.parentNode.removeChild(busyMask);
+    busyMask = null; busyTitle = null; busyTip = null;
+  }
+  /** 让浏览器先把界面画出来（遮罩能被看见），再执行会阻塞主线程的解析 */
+  function nextPaint(fn) {
+    requestAnimationFrame(function () { setTimeout(fn, 24); });
+  }
+
+  /** 按需拉取内置示例数据（12MB）：首屏不加载，点「载入示例表」或 ?demo=1 时才拉 */
+  function loadSampleData(cb) {
+    if (AC.sampleCsv) { cb(); return; }
+    showBusy('正在下载示例数据…', '约 12MB，网络较慢时需要等一会儿——请不要刷新页面');
+    nextPaint(function () {
+      const s = document.createElement('script');
+      s.src = 'js/sample-data.js?v=' + (AC.version || Date.now());
+      s.onload = function () {
+        // 下载完紧接着是同步解析，先把文案换掉再让它去占主线程
+        setBusy('正在解析示例数据…', '数据量较大，这一小会儿页面会没响应，属正常现象');
+        nextPaint(function () {
+          cb();
+          hideBusy();
+        });
+      };
+      s.onerror = function () {
+        hideBusy();
+        U.toast('示例数据加载失败——可能是网络问题，请重试或改用自己的战报 CSV。', 'err', 6000);
+        cb();
+      };
+      document.head.appendChild(s);
+    });
   }
 
   /* ================= UI 绑定 ================= */
@@ -393,28 +479,35 @@ window.AC = window.AC || {};
     $('#btnClearAll').addEventListener('click', function () {
       if (!store.battles.length) { U.toast('当前没有数据。'); return; }
       if (!window.confirm('确定清空全部累计数据？此操作不可撤销。')) return;
-      store.clear();
-      renderBatches();
-      clearSelection();
-      recompute(true);
-      U.toast('已清空全部数据。');
+      Promise.resolve(store.clear()).then(function () {
+        renderBatches();
+        clearSelection();
+        recompute(true);
+        U.toast('已清空全部数据。');
+      });
     });
 
     const btnPrev = $('#btnLoadPrev');
     if (btnPrev) {
       btnPrev.addEventListener('click', function () {
-        if (!store.hasPrev()) { U.toast('没有找到上次的数据。', 'warn'); return; }
-        const r = store.restorePrev();
-        if (!r.ok) { U.toast('上次的数据无法恢复。', 'err'); return; }
-        renderBatches();
-        recompute(true);
-        U.toast('已载入上次的数据：' + r.n + ' 场 / ' + r.batches + ' 份表。');
+        Promise.resolve(store.hasPrev()).then(function (has) {
+          if (!has) { U.toast('没有找到上次的数据。', 'warn'); return null; }
+          return store.restorePrev();
+        }).then(function (r) {
+          if (!r) return;
+          if (!r.ok) { U.toast('上次的数据无法恢复。', 'err'); return; }
+          renderBatches();
+          recompute(true);
+          U.toast('已载入上次的数据：' + r.n + ' 场 / ' + r.batches + ' 份表。');
+        });
       });
     }
 
     $('#btnLoadSample').addEventListener('click', function () {
-      if (!AC.sampleCsv) { U.toast('未找到示例数据文件。', 'err'); return; }
-      ingest(AC.sampleCsv, '示例战报表（内置）');
+      loadSampleData(function () {
+        if (!AC.sampleCsv) { U.toast('未找到示例数据文件。', 'err'); return; }
+        ingest(AC.sampleCsv, '示例战报表（内置）');
+      });
     });
 
     // 生成内置数据
@@ -561,13 +654,19 @@ window.AC = window.AC || {};
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
       try {
+        showBusy('正在读取 ' + f.name + '…', '文件较大时需要几秒，请不要刷新页面');
+        await new Promise(function (r) { nextPaint(r); });
         const buf = await readFile(f);
+        setBusy('正在解析 ' + f.name + '…', '数据量大时页面会短暂无响应，属正常现象');
+        await new Promise(function (r) { nextPaint(r); });
         const text = decodeBuffer(buf);
         const res = ingest(text, f.name);
         if (res) ok++; else fail++;
       } catch (e) {
         fail++;
         U.toast('导入 <b>' + f.name + '</b> 失败：' + e.message, 'err');
+      } finally {
+        hideBusy();
       }
     }
     if (ok) U.toast('完成：成功 ' + ok + ' 份' + (fail ? '，失败 ' + fail + ' 份' : ''), 'ok');
@@ -911,12 +1010,16 @@ window.AC = window.AC || {};
     }
 
     $('#filterStat').textContent = r.stats.totalKept + ' 场生效';
+    // 图例要短：它挤在标签栏右侧，长文案会被裁掉，完整口径放到悬浮提示里
+    const breadthHint = '<span class="legend-item legend-extra" title="3D 视图的节点高度 = 强度分（公平压制力 + 打赢面）">3D 高度 = 强度分</span>';
     $('#legend').innerHTML = filters.dimension === 'comp'
       ? '<span class="legend-item"><span class="legend-bar"></span>被克 &rarr; 均衡 &rarr; 克</span>' +
         '<span class="legend-item legend-extra">节点大小 = 出场次数</span>' +
-        '<span class="legend-item legend-extra">流动方向 = 克制方向</span>'
+        '<span class="legend-item legend-extra">流动方向 = 克制方向</span>' +
+        breadthHint
       : '<span class="legend-item"><span class="legend-bar"></span>被克 &rarr; 均衡 &rarr; 克</span>' +
-        '<span class="legend-item legend-extra">节点大小 = 出场次数</span>';
+        '<span class="legend-item legend-extra">节点大小 = 出场次数</span>' +
+        breadthHint;
     updateFoot();
   }
 
@@ -1031,6 +1134,34 @@ window.AC = window.AC || {};
     }).sort(function (a, b) { return b.n - a.n || b.rate - a.rate; });
   }
 
+  /**
+   * 连赢战报：点开看这一波的逐场战绩（谁打的、打了谁、武勋多少、有没有被当前筛选排除）。
+   * 复用玩家分析的战报浮层，只是把「该玩家 + 该阵容」的交战记录列出来——
+   * run.ids 是这段连赢的战斗编号，用于提示这次要看的是哪几场。
+   */
+  function openStreakLog(node, run) {
+    if (!run || !run.ids || !run.ids.length) {
+      U.toast('这段连赢没有可展示的战报（旧版导出可能缺战斗编号）。', 'warn');
+      return;
+    }
+    const r = state.result;
+    if (!AC.playerAnalysis || !AC.playerAnalysis.openBattleLog) {
+      U.toast('战报浮层不可用。', 'err');
+      return;
+    }
+    const keptSet = new Set((r && r.battles ? r.battles : []).map(function (b) { return b.id; }));
+    AC.playerAnalysis.openBattleLog({
+      result: r,
+      allBattles: (r && r.allBattles) ? r.allBattles : (r ? r.battles : []),
+      keptIdSet: keptSet,
+      playerName: run.player,
+      comp: node,
+      // 只列这一段连赢期间的交战（含被筛选排除的场次，卡片上会打标）
+      range: { from: run.startTs || 0, to: run.endTs || 0 },
+      note: '连赢 ' + run.len + ' 场 · 平均武勋 ' + Math.round(run.wuxunAvg || 0) + '/场'
+    });
+  }
+
   function openRecommendedConfig(node) {
     const all = recommendedConfigs(node);
     const SHOW = 20;                       // 变体可能上百套，只渲染排序后的前若干套
@@ -1075,15 +1206,41 @@ window.AC = window.AC || {};
     }
 
     insp.appendChild(U.el('div', { class: 'insp-grid' }, [
+      cell('强度分', (node.strength || 0).toFixed(1) + ' / 100'),
       cell('出场', node.n + ' 场'),
       cell('胜率', U.fmtPct(node.rate, 1)),
       cell('战绩', node.win + '胜 ' + node.loss + '负 ' + node.draw + '平'),
-      cell('净压制力', U.fmtSigned(node.netPowerFair, 1)),
-      cell('场均战损', U.fmtShort(node.avgCostOut)),
-      cell('战损比', node.exchange === null ? '-' : node.exchange.toFixed(2))
+      cell('公平胜率', node.nFair > 0 ? U.fmtPct(node.rateFair, 1) + '（' + node.nFair + ' 场）' : '无公平样本'),
+      cell('赢过队伍', (node.beatKinds || 0) + ' / 交过手 ' + (node.oppTypes || 0) + ' 支'),
+      cell('连胜', '最高 ' + (node.streakBest || 0) + ' 连 · 3 连以上 ' + (node.streakStrong || 0) + ' 次'),
+      cell('赢时战损', node.fairLoss === null || node.fairLoss === undefined ? '-' : U.fmtPct(node.fairLoss, 1) + '（我方掉兵占双方）')
+    ]));
+
+    // 五维分项：强度分是怎么来的，逐项摊开给玩家看
+    const PARTS = [
+      { key: 'sSpan', label: '打击面', w: '32%', desc: '赢过多少支不同队伍' },
+      { key: 'sWin', label: '胜率', w: '26%', desc: '只认均势与以少打多的公平胜率' },
+      { key: 'sStreak', label: '连胜', w: '15%', desc: '这套阵容打出的最高连赢' },
+      { key: 'sLoss', label: '战损', w: '12%', desc: '赢的时候掉兵省不省' },
+      { key: 'sDis', label: '劣势', w: '12%', desc: '以少打多能不能赢' }
+    ];
+    insp.appendChild(U.el('div', { class: 'force-split' }, [
+      U.el('div', { class: 'fs-title', text: '强度分拆解（满分 100）' }),
+      U.el('div', { class: 'score-parts' }, PARTS.map(function (d) {
+        const v = Math.max(0, Math.min(100, node[d.key] || 0));
+        return U.el('div', { class: 'sp-row' }, [
+          U.el('span', { class: 'sp-name', text: d.label + '（' + d.w + '）' }),
+          U.el('span', { class: 'sp-bar' }, [
+            U.el('i', { style: { width: v + '%', background: v >= 70 ? '#ff7a5c' : (v >= 45 ? '#ffb347' : '#3ad2ff') } })
+          ]),
+          U.el('span', { class: 'sp-num', text: v.toFixed(0) }),
+          U.el('span', { class: 'sp-desc', text: d.desc })
+        ]);
+      }))
     ]));
 
     // 兵力态势拆解：压制力只看「势均力敌」与「以少打多」，靠兵力优势刷出来的不算强度
+    // （打赢面单独成块，见下）
     if (node.byForce && (node.nEven > 0 || node.nDis > 0 || node.nAdv > 0)) {
       const fsRow = function (label, fb, rate, counts) {
         return U.el('div', { class: 'fs-row' + (counts ? '' : ' muted') }, [
@@ -1110,6 +1267,94 @@ window.AC = window.AC || {};
         ])
       ]));
     }
+
+    // 连胜：一次出战 = 用剩余兵力接着打，直到输／平／接不上（兵力衔接判定，不看时间间隔）
+    // 指标取「这套阵容打出的最高连赢」——最能说明「这波推过去能连吃几支队伍」
+    const bestRun = node.streakBestRun || null;
+    insp.appendChild(U.el('div', { class: 'force-split' }, [
+      U.el('div', { class: 'fs-title', text: '连胜（这套阵容打出的最高连赢）' }),
+      U.el('div', { class: 'fs-note' }, [
+        U.el('span', { text: '最高连赢' }),
+        U.el('b', { style: { color: U.rateColor(0.5 + Math.min(0.5, (node.streakBest || 0) / 10)) }, text: (node.streakBest || 0) + ' 场' }),
+        U.el('span', { style: { color: '#5d6f8f' }, text: '　某玩家用这套阵容一次出战连续打赢的最多场数' +
+          (node.streakBestAll && node.streakBestAll > (node.streakBest || 0) ? '（含被筛选排除的场次则达 ' + node.streakBestAll + ' 场）' : '') })
+      ]),
+      U.el('div', { class: 'fs-note' }, [
+        U.el('span', { text: '3 连以上' }),
+        U.el('b', { style: { color: '#8fa3c4' }, text: (node.streakStrong || 0) + ' 次' }),
+        U.el('span', { style: { color: '#5d6f8f' }, text: '　打出过的次数：经常能连赢，还是偶然一次' })
+      ]),
+      // 连赢的「含金量」：武勋几千几百 = 打的是残兵/低等级，体现不出强度
+      U.el('div', { class: 'fs-note' }, [
+        U.el('span', { text: '连赢成色' }),
+        U.el('b', {
+          style: { color: node.streakWuxunAvg >= 3800 ? '#ff7a5c' : (node.streakWuxunAvg >= 3000 ? '#ffb347' : '#8fa3c4') },
+          text: node.streakWuxunAvg > 0 ? Math.round(node.streakWuxunAvg) + ' 武勋/场' : '无武勋列'
+        }),
+        U.el('span', { style: { color: '#5d6f8f' }, text: node.streakWuxunAvg > 0
+          ? '　连赢段的平均单场武勋（' + (node.streakHighWuxun || 0) + ' 段达标）：几千几百说明打的是残兵/低等级'
+          : '　旧版导出没有武勋列，未做含金量折算' })
+      ]),
+      // 连赢场数看着漂亮、成色却不够时，直接把话说清楚，别让玩家被数字骗
+      (node.streakBest >= 2 && node.streakWuxunAvg > 0 && node.streakWuxunAvg < 3000)
+        ? U.el('div', { class: 'fs-warn', text: '⚠ 这段连赢的成色偏低（平均 ' + Math.round(node.streakWuxunAvg) +
+          ' 武勋/场）：多半打的是残兵或低等级队伍，强度参考价值有限' })
+        : null,
+      U.el('div', { class: 'fs-note' }, [
+        U.el('span', { text: '判定口径　' }),
+        U.el('span', { style: { color: '#8fa3c4' }, text: '下一场的开战兵力 ≈ 上一场的剩余兵力（1% 内）就算同一次出战（隔多久都算），直到输／平／再没有能接上的对手' })
+      ]),
+      // 连赢的证据：点开就是这一波的逐场战报（哪几场、对手是谁、武勋多少、是否被当前筛选排除）
+      bestRun ? U.el('div', { class: 'streak-evidence' }, [
+        U.el('button', {
+          class: 'insp-btn', text: '查看连赢战报（' + bestRun.len + ' 连）',
+          title: bestRun.player + ' 用这套阵容连赢 ' + bestRun.len + ' 场，点开看逐场战报',
+          onclick: function () { openStreakLog(node, bestRun); }
+        }),
+        U.el('span', { class: 'insp-btn-tip', text: bestRun.player + ' · ' + bestRun.len + ' 连 · 累计武勋 ' + U.fmtInt(bestRun.wuxun) })
+      ]) : null,
+      (node.streakStrongRuns && node.streakStrongRuns.length) ? U.el('div', { class: 'streak-runs' }, [
+        U.el('div', { class: 'fs-note' }, [
+          U.el('span', { text: '打出过 ' + node.streakStrongRuns.length + ' 段 3 连以上：' }),
+          U.el('span', { style: { color: '#5d6f8f' }, text: '点玩家名看该段战报' })
+        ]),
+        U.el('div', { class: 'streak-run-list' }, node.streakStrongRuns.slice(0, 8).map(function (r) {
+          return U.el('div', { class: 'streak-run-row' }, [
+            U.el('span', { class: 'run-player', text: r.player }),
+            U.el('span', { class: 'run-len', text: r.len + ' 连' }),
+            U.el('span', { class: 'run-wuxun', text: '武勋 ' + U.fmtInt(r.wuxun) + '（均 ' + Math.round(r.wuxunAvg) + '）' }),
+            U.el('button', {
+              class: 'insp-btn btn-xs', text: '战报',
+              onclick: function () { openStreakLog(node, r); }
+            })
+          ]);
+        }))
+      ]) : null
+    ]));
+
+    // 战损与劣势：赢的时候省不省兵、少打多能不能赢
+    insp.appendChild(U.el('div', { class: 'force-split' }, [
+      U.el('div', { class: 'fs-title', text: '战损与劣势' }),
+      U.el('div', { class: 'fs-note' }, [
+        U.el('span', { text: '赢时战损' }),
+        U.el('b', { style: { color: '#8fa3c4' }, text: node.fairLoss === null || node.fairLoss === undefined ? '-' : U.fmtPct(node.fairLoss, 1) }),
+        U.el('span', { style: { color: '#5d6f8f' }, text: '　我方掉兵 / 双方掉兵（只算赢的公平场次，' + (node.lossN || 0) + ' 场）' })
+      ]),
+      U.el('div', { class: 'fs-note' }, [
+        U.el('span', { text: '场均战损' }),
+        U.el('b', { style: { color: '#8fa3c4' }, text: U.fmtShort(node.avgCostOut) }),
+        U.el('span', { style: { color: '#5d6f8f' }, text: '　战损比（对方掉兵/我方掉兵）' + (node.exchange === null ? '-' : node.exchange.toFixed(2)) })
+      ]),
+      U.el('div', { class: 'fs-note' }, [
+        U.el('span', { text: '以少打多' }),
+        U.el('b', {
+          style: { color: node.rateDis === null ? '#8fa3c4' : U.rateColor(node.rateDis) },
+          text: node.rateDis === null ? '无样本（打开「只统计兵力接近」时为 0）' : (node.nDis + ' 场 · 胜率 ' + U.fmtPct(node.rateDis, 0))
+        }),
+        node.disLift === null || node.disLift === undefined ? null
+          : U.el('span', { style: { color: '#5d6f8f' }, text: '　比自己的公平胜率' + (node.disLift >= 0 ? '高 ' : '低 ') + U.fmtPct(Math.abs(node.disLift), 1) })
+      ])
+    ]));
 
     // 常用阵型分布（阵容维度下才有意义）
     if (filters.dimension === 'comp' && Object.keys(node.formations).length) {
@@ -1394,9 +1639,13 @@ window.AC = window.AC || {};
       const nd = state.result.nodeMap.get(info.id);
       if (!nd) return;
       html = '<b>' + esc(nd.display) + '</b>' + U.troopHtml(nd.troopSig) +
-        '<br>出场 ' + nd.n + ' 场 · 胜率 ' + U.fmtPct(nd.rate) +
-        '<br>净压制力 ' + U.fmtSigned(nd.netPowerFair) +
-        (nd.nFair > 0 ? '（公平 ' + nd.nFair + ' 场 / 胜率 ' + U.fmtPct(nd.rateFair, 0) + '）' : '') +
+        '<br>强度分 ' + (nd.strength || 0).toFixed(1) + ' / 100 · 出场 ' + nd.n + ' 场 · 胜率 ' + U.fmtPct(nd.rate) +
+        '<br>打击面 ' + (nd.sSpan || 0).toFixed(0) + ' · 胜率 ' + (nd.sWin || 0).toFixed(0) +
+        ' · 连胜 ' + (nd.sStreak || 0).toFixed(0) + ' · 战损 ' + (nd.sLoss || 0).toFixed(0) + ' · 劣势 ' + (nd.sDis || 0).toFixed(0) +
+        '<br>赢过 ' + (nd.beatKinds || 0) + ' / 交过手 ' + (nd.oppTypes || 0) + ' 支队伍' +
+        ' · 最长 ' + (nd.streakMax || 0) + ' 连赢' +
+        (nd.fairLoss === null || nd.fairLoss === undefined ? '' : ' · 赢时战损 ' + U.fmtPct(nd.fairLoss, 0)) +
+        (nd.nDis >= 3 && nd.rateDis !== null ? ' · 以少打多 ' + U.fmtPct(nd.rateDis, 0) : '') +
         (nd.mainFormation ? '<br>常用阵型 ' + esc(nd.mainFormation) : '') +
         (nd.redAvg !== null && nd.redAvg !== undefined ? '<br>平均红度 ' + nd.redAvg.toFixed(2) : '');
     } else {

@@ -77,11 +77,10 @@ window.AC = window.AC || {};
     const R = Math.min(this.w, this.h) * 0.34;
 
     const prev = this.nodeIndex;
-    // z 轴目标：净压制力归一化（强的浮在上层）
-    // 用「公平口径」——只认势均力敌与以少打多的战绩，堆兵刷出来的高度不算数
+    // z 轴目标：强度分归一化（强的浮在上层）
+    // 强度分 = 公平压制力（只认势均力敌与以少打多）+ 打赢面加成
     const powerOf = function (nd) {
-      const v = (nd.netPowerFair === undefined || nd.netPowerFair === null) ? nd.netPower : nd.netPowerFair;
-      return v || 0;
+      return AC.analyzer && AC.analyzer.strengthOf ? AC.analyzer.strengthOf(nd) : ((nd.netPowerFair || nd.netPower) || 0);
     };
     let maxPower = 0;
     list.forEach(function (nd) { maxPower = Math.max(maxPower, Math.abs(powerOf(nd))); });
@@ -100,6 +99,8 @@ window.AC = window.AC || {};
         rate: nd.rate,
         netPower: powerOf(nd),
         netPowerOld: nd.netPower || 0,
+        breadth: nd.breadth || 0,
+        oppTypes: nd.oppTypes || 0,
         rateFair: nd.rateFair,
         r: 8 + 15 * Math.sqrt(nd.n / maxN),
         x: old ? old.x : cx + Math.cos(ang) * R * (0.55 + 0.45 * Math.random()),
