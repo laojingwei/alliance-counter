@@ -250,6 +250,85 @@ window.AC = window.AC || {};
     }
   }
 
+  /**
+   * 通用入口：按一份配置列表弹窗（阵容详情页的「推荐配置」等复用）
+   * opts.sorts      形如 [{key:'n',label:'按场次'},{key:'rate',label:'按胜率'}]，给了就显示排序切换
+   * opts.defaultSort 默认排序键
+   * opts.sub(key, n) 副标题（随排序键变化，可传字符串）
+   */
+  function openConfigList(title, sub, configs, opts) {
+    configs = configs || [];
+    opts = opts || {};
+    const sorts = opts.sorts || null;
+    let sortKey = opts.defaultSort || (sorts ? sorts[0].key : null);
+    const pop = makePopup();
+
+    const subNode = U.el('span', { class: 'hc-count' });
+    const sortBar = U.el('div', { class: 'hc-sort' });
+
+    /** 小样本保护：胜率排序时按收缩胜率比较，避免「1 场 100%」霸榜 */
+    function shrunk(c) {
+      const n = c.n || 0;
+      if (!n) return 0.5;
+      return (c.rate * n + 0.5 * 3) / (n + 3);
+    }
+
+    function sortList() {
+      if (!sorts) return configs.slice();
+      const list = configs.slice();
+      if (sortKey === 'rate') {
+        list.sort(function (a, b) { return shrunk(b) - shrunk(a) || (b.n || 0) - (a.n || 0); });
+      } else if (sortKey === 'exchange') {
+        list.sort(function (a, b) {
+          const ae = (a.exchange === null || a.exchange === undefined) ? 99 : a.exchange;
+          const be = (b.exchange === null || b.exchange === undefined) ? 99 : b.exchange;
+          return ae - be || (b.n || 0) - (a.n || 0);
+        });
+      } else {
+        list.sort(function (a, b) { return (b.n || 0) - (a.n || 0) || shrunk(b) - shrunk(a); });
+      }
+      return list;
+    }
+
+    function render() {
+      pop.body.innerHTML = '';
+      const list = sortList();
+      subNode.textContent = typeof sub === 'function' ? sub(sortKey, list.length) : (sub || '');
+      if (!list.length) {
+        pop.body.appendChild(U.el('div', { class: 'hint', text: '这套阵容没有可展示的配置明细（需要导入带技能 / 装备列的明细表）。' }));
+        return;
+      }
+      list.forEach(function (cfg, i) {
+        pop.body.appendChild(configBlock(cfg, i));
+      });
+    }
+
+    if (sorts) {
+      sorts.forEach(function (s) {
+        sortBar.appendChild(U.el('button', {
+          class: 'hc-sort-btn' + (s.key === sortKey ? ' on' : ''),
+          title: s.tip || '',
+          text: s.label,
+          onclick: function () {
+            if (sortKey === s.key) return;
+            sortKey = s.key;
+            sortBar.querySelectorAll('.hc-sort-btn').forEach(function (b) { b.classList.remove('on'); });
+            this.classList.add('on');
+            render();
+          }
+        }));
+      });
+    }
+
+    pop.finish(U.el('div', { class: 'bl-title-l' }, [
+      U.el('b', { text: title }),
+      subNode,
+      sorts ? sortBar : null
+    ]));
+
+    render();
+  }
+
   /** 战报浮层里某一方的配置详情（单场：直接取该场的武将快照 + 阵型） */
   function openSideConfig(playerName, side, opts) {
     opts = opts || {};
@@ -341,12 +420,13 @@ window.AC = window.AC || {};
         if (s.me.player) {
           let po = a.players.get(s.me.player);
           if (!po) {
-            po = { name: s.me.player, n: 0, win: 0, loss: 0, draw: 0, costOut: 0, costIn: 0, comps: new Map() };
+            po = { name: s.me.player, n: 0, win: 0, loss: 0, draw: 0, costOut: 0, costIn: 0, comps: new Map(), redSum: 0, redN: 0 };
             a.players.set(s.me.player, po);
           }
           po.n++;
           po.costOut += costOut;
           po.costIn += costIn;
+          if (s.me.redAvg !== null && s.me.redAvg !== undefined) { po.redSum += s.me.redAvg; po.redN++; }
           if (b.result === 'draw') po.draw++;
           else if (won) po.win++;
           else po.loss++;
@@ -421,6 +501,7 @@ window.AC = window.AC || {};
       a.playerList.forEach(function (p) {
         p.rate = (p.win + p.draw * 0.5) / (p.n || 1);
         p.exchange = p.costIn > 0 ? p.costOut / p.costIn : null;
+        p.redAvg = p.redN ? p.redSum / p.redN : null;
         p.comps = Array.from(p.comps.values()).sort(function (x, y) { return y.n - x.n; });
         p.comps.forEach(function (pc) {
           pc.rate = (pc.win + pc.draw * 0.5) / (pc.n || 1);
@@ -756,38 +837,141 @@ window.AC = window.AC || {};
         '越高说明培养越充分')
     ]));
 
-    /* ---- 主力玩家 ---- */
+    /* ---- 主力玩家（可按 出场次数 / 胜率 / 红度 筛选，条件可叠加） ---- */
     const ps = section('主力玩家', '按出场次数');
-    const pTable = U.el('div', { class: 'ally-table' });
-    pTable.appendChild(U.el('div', { class: 'at-head' }, [
-      U.el('div', { text: '玩家' }), U.el('div', { text: '场次' }),
-      U.el('div', { text: '胜率' }), U.el('div', { text: '战损比' }),
-      U.el('div', { text: '常驻阵容' })
-    ]));
-    ally.playerList.slice(0, 10).forEach(function (p) {
-      pTable.appendChild(U.el('div', { class: 'at-row' }, [
-        U.el('div', { class: 'at-name', title: p.name, text: p.name }),
-        U.el('div', { text: p.n + ' 场' }),
-        U.el('div', { class: 'at-rate', style: { color: U.rateColor(p.rate) }, text: U.fmtPct(p.rate, 0) }),
-        U.el('div', { text: p.exchange === null ? '-' : p.exchange.toFixed(2) }),
-        U.el('div', { class: 'at-comp' }, [
-          p.comps.length
-            ? U.compWithTroop(p.comps[0].display, p.comps[0].troopSig || (result.nodeMap.get(p.comps[0].key) || {}).troopSig)
-            : U.el('span', { text: '-' }),
-          p.comps.length
-            ? U.el('button', {
-              class: 'at-detail', text: '详情',
-              title: '查看这套阵容的完整配置（技能 / 兵书 / 装备 / 战马）；同一套阵容换过配置会分别列出',
-              onclick: function (e) {
-                e.stopPropagation();
-                openCompConfig(p.name, p, p.comps[0]);
-              }
-            })
-            : null
-        ])
+    if (!self.playerFilter) self.playerFilter = { minN: 0, minRate: 0, reds: [] };
+    const pf = self.playerFilter;
+    const pBody = U.el('div');
+
+    /** 组装表格（依当前筛选条件） */
+    function buildPlayerTable() {
+      const list = ally.playerList.filter(function (p) {
+        if (p.n < pf.minN) return false;
+        if (pf.minRate > 0 && p.rate * 100 < pf.minRate - 1e-9) return false;
+        if (pf.reds.length) {
+          const r = (p.redAvg === null || p.redAvg === undefined) ? null : Math.round(p.redAvg);
+          if (r === null || pf.reds.indexOf(r) < 0) return false;
+        }
+        return true;
+      });
+
+      const box = U.el('div');
+      box.appendChild(U.el('div', { class: 'pt-sum' }, [
+        U.el('span', { text: '符合条件 ' }),
+        U.el('b', { text: String(list.length) }),
+        U.el('span', { text: ' 人 / 共 ' + ally.playerList.length + ' 人' }),
+        list.length > 15 ? U.el('span', { class: 'pt-more', text: '（按场次排序显示前 15）' }) : null
       ]));
-    });
-    ps.appendChild(pTable);
+
+      const table = U.el('div', { class: 'ally-table' });
+      table.appendChild(U.el('div', { class: 'at-head' }, [
+        U.el('div', { text: '玩家' }), U.el('div', { text: '场次' }),
+        U.el('div', { text: '胜率' }), U.el('div', { text: '战损比' }),
+        U.el('div', { text: '均红' }), U.el('div', { text: '常驻阵容' })
+      ]));
+      if (!list.length) {
+        table.appendChild(U.el('div', { class: 'pt-empty', text: '没有符合当前筛选的玩家，试着放宽条件。' }));
+      }
+      list.slice(0, 15).forEach(function (p) {
+        table.appendChild(U.el('div', { class: 'at-row' }, [
+          U.el('div', { class: 'at-name', title: p.name, text: p.name }),
+          U.el('div', { text: p.n + ' 场' }),
+          U.el('div', { class: 'at-rate', style: { color: U.rateColor(p.rate) }, text: U.fmtPct(p.rate, 0) }),
+          U.el('div', { text: p.exchange === null ? '-' : p.exchange.toFixed(2) }),
+          U.el('div', {
+            class: 'at-red',
+            style: { color: p.redAvg === null ? '#5d6f8f' : U.rateColor(Math.min(1, (p.redAvg || 0) / 5)) },
+            text: p.redAvg === null ? '-' : p.redAvg.toFixed(1)
+          }),
+          U.el('div', { class: 'at-comp' }, [
+            p.comps.length
+              ? U.compWithTroop(p.comps[0].display, p.comps[0].troopSig || (result.nodeMap.get(p.comps[0].key) || {}).troopSig)
+              : U.el('span', { text: '-' }),
+            p.comps.length
+              ? U.el('button', {
+                class: 'at-detail', text: '详情',
+                title: '查看这套阵容的完整配置（技能 / 兵书 / 装备 / 战马）；同一套阵容换过配置会分别列出',
+                onclick: function (e) {
+                  e.stopPropagation();
+                  openCompConfig(p.name, p, p.comps[0]);
+                }
+              })
+              : null
+          ])
+        ]));
+      });
+      box.appendChild(table);
+      return box;
+    }
+
+    /** 筛选栏：三组条件可任意叠加 */
+    function buildPlayerFilter() {
+      const bar = U.el('div', { class: 'pt-filter' });
+      const refresh = function () {
+        pBody.innerHTML = '';
+        pBody.appendChild(buildPlayerTable());
+      };
+
+      // ① 最少出场次数
+      const nVal = U.el('b', { text: String(pf.minN) });
+      bar.appendChild(U.el('label', { class: 'ptf' }, [
+        U.el('span', { class: 'ptf-k' }, [U.el('span', { text: '最少场次 ' }), nVal]),
+        U.el('input', {
+          type: 'range', min: '0', max: '50', step: '1', value: String(pf.minN),
+          oninput: function (e) { pf.minN = Number(e.target.value); nVal.textContent = pf.minN; refresh(); }
+        })
+      ]));
+
+      // ② 最低胜率
+      const rVal = U.el('b', { text: pf.minRate + '%' });
+      bar.appendChild(U.el('label', { class: 'ptf' }, [
+        U.el('span', { class: 'ptf-k' }, [U.el('span', { text: '最低胜率 ' }), rVal]),
+        U.el('input', {
+          type: 'range', min: '0', max: '100', step: '5', value: String(pf.minRate),
+          oninput: function (e) { pf.minRate = Number(e.target.value); rVal.textContent = pf.minRate + '%'; refresh(); }
+        })
+      ]));
+
+      // ③ 红度多选（可勾多个档位；全不选＝不限）
+      const reds = U.el('div', { class: 'ptf-reds' });
+      [0, 1, 2, 3, 4, 5].forEach(function (r) {
+        reds.appendChild(U.el('button', {
+          class: 'ptf-red' + (pf.reds.indexOf(r) >= 0 ? ' on' : ''),
+          title: '只看平均红度约为 ' + r + ' 的玩家（可多选）',
+          text: r + ' 红',
+          onclick: function () {
+            const i = pf.reds.indexOf(r);
+            if (i >= 0) pf.reds.splice(i, 1); else pf.reds.push(r);
+            this.classList.toggle('on');
+            refresh();
+          }
+        }));
+      });
+      bar.appendChild(U.el('div', { class: 'ptf-group' }, [
+        U.el('span', { class: 'ptf-k' }, [
+          U.el('span', { text: '红度 ' }),
+          U.el('span', { class: 'ptf-tip', text: '可多选' })
+        ]),
+        reds
+      ]));
+
+      bar.appendChild(U.el('button', {
+        class: 'ptf-reset', text: '重置筛选',
+        onclick: function () {
+          pf.minN = 0; pf.minRate = 0; pf.reds.length = 0;
+          nVal.textContent = '0'; rVal.textContent = '0%';
+          bar.querySelectorAll('input[type=range]').forEach(function (inp) { inp.value = '0'; });
+          bar.querySelectorAll('.ptf-red').forEach(function (b) { b.classList.remove('on'); });
+          refresh();
+        }
+      }));
+
+      return bar;
+    }
+
+    ps.appendChild(buildPlayerFilter());
+    ps.appendChild(pBody);
+    pBody.appendChild(buildPlayerTable());
     host.appendChild(ps);
 
     /* ---- 主流队伍 ---- */
@@ -1010,6 +1194,7 @@ window.AC = window.AC || {};
   AC.allianceAnalysis = { build: build, counterAdvice: counterAdvice, bestAgainst: bestAgainst };
   AC.openCompConfig = openCompConfig;   // 便于调试与分享
   AC.openSideConfig = openSideConfig;   // 供玩家页的战报浮层复用（单场一方的配置）
+  AC.openConfigList = openConfigList;   // 通用配置列表弹窗（阵容详情页的推荐配置等）
 
   /** 阵型站位图鉴（调试 / 核对站位用）：把已录入的阵型各画一遍 */
   function previewFormations() {

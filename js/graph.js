@@ -78,22 +78,29 @@ window.AC = window.AC || {};
 
     const prev = this.nodeIndex;
     // z 轴目标：净压制力归一化（强的浮在上层）
+    // 用「公平口径」——只认势均力敌与以少打多的战绩，堆兵刷出来的高度不算数
+    const powerOf = function (nd) {
+      const v = (nd.netPowerFair === undefined || nd.netPowerFair === null) ? nd.netPower : nd.netPowerFair;
+      return v || 0;
+    };
     let maxPower = 0;
-    list.forEach(function (nd) { maxPower = Math.max(maxPower, Math.abs(nd.netPower || 0)); });
+    list.forEach(function (nd) { maxPower = Math.max(maxPower, Math.abs(powerOf(nd))); });
     maxPower = maxPower || 1;
     const zRange = this.zRange;
 
     this.nodes = list.map(function (nd, i) {
       const old = prev.get(nd.key);
       const ang = (i / Math.max(1, list.length)) * Math.PI * 2 + 0.6;
-      const zTarget = ((nd.netPower || 0) / maxPower) * zRange;
+      const zTarget = (powerOf(nd) / maxPower) * zRange;
       return {
         id: nd.key,
         data: nd,
         label: nd.display,
         n: nd.n,
         rate: nd.rate,
-        netPower: nd.netPower || 0,
+        netPower: powerOf(nd),
+        netPowerOld: nd.netPower || 0,
+        rateFair: nd.rateFair,
         r: 8 + 15 * Math.sqrt(nd.n / maxN),
         x: old ? old.x : cx + Math.cos(ang) * R * (0.55 + 0.45 * Math.random()),
         y: old ? old.y : cy + Math.sin(ang) * R * (0.55 + 0.45 * Math.random()),

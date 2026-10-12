@@ -27,14 +27,19 @@ window.AC = window.AC || {};
       return;
     }
 
-    const byPower = nodes.slice().sort(function (a, b) { return b.netPower - a.netPower; });
-    const maxAbs = Math.max.apply(null, nodes.map(function (n) { return Math.abs(n.netPower); })) || 1;
+    // 用「公平压制力」排序：只认势均力敌与以少打多的战绩，靠兵力优势刷出来的不算强度
+    const powerOf = function (n) {
+      const v = (n.netPowerFair === undefined || n.netPowerFair === null) ? n.netPower : n.netPowerFair;
+      return v || 0;
+    };
+    const byPower = nodes.slice().sort(function (a, b) { return powerOf(b) - powerOf(a); });
+    const maxAbs = Math.max.apply(null, nodes.map(function (n) { return Math.abs(powerOf(n)); })) || 1;
 
     const head = U.el('div', { class: 'rank-row', style: { animation: 'none', opacity: 1, transform: 'none', background: 'transparent', border: 'none', cursor: 'default', fontWeight: '600', color: '#8fa3c4', fontSize: '11.5px' } }, [
       U.el('div', { class: 'rank-idx', text: '#' }),
-      U.el('div', { class: 'rank-name', text: '阵容（按净压制力排序）' }),
+      U.el('div', { class: 'rank-name', text: '阵容（按公平压制力排序：只看势均力敌与以少打多）' }),
       U.el('div', { class: 'rank-val', text: '出场 / 胜率' }),
-      U.el('div', { text: '压制力' }),
+      U.el('div', { text: '公平压制力' }),
       U.el('div', { class: 'rank-val', text: '均红度' }),
       U.el('div', { class: 'rank-val', text: '平均战损' }),
       U.el('div', { class: 'rank-val', text: '战损比' })
@@ -42,22 +47,29 @@ window.AC = window.AC || {};
     host.appendChild(head);
 
     byPower.forEach(function (nd, i) {
-      const pct = Math.max(0, nd.netPower) / maxAbs;
-      const negPct = Math.max(0, -nd.netPower) / maxAbs;
-      const barColor = nd.netPower >= 0 ? 'linear-gradient(90deg,#ff7a5c,#ff3d6e)' : 'linear-gradient(90deg,#3ad2ff,#2f7fe0)';
+      const pw = powerOf(nd);
+      const pct = Math.max(0, pw) / maxAbs;
+      const negPct = Math.max(0, -pw) / maxAbs;
+      const barColor = pw >= 0 ? 'linear-gradient(90deg,#ff7a5c,#ff3d6e)' : 'linear-gradient(90deg,#3ad2ff,#2f7fe0)';
 
       const row = U.el('div', { class: 'rank-row', style: { animationDelay: Math.min(360, i * 26) + 'ms' } }, [
         U.el('div', { class: 'rank-idx', text: String(i + 1) }),
-        U.el('div', { class: 'rank-name', title: nd.display }, [
+        U.el('div', { class: 'rank-name', title: nd.display + (nd.nFair > 0
+          ? '｜公平胜率 ' + U.fmtPct(nd.rateFair, 1) + '（' + nd.nFair + ' 场：势均力敌 + 以少打多）' : '') }, [
           U.compWithTroop(nd.display, nd.troopSig),
           nd.mainFormation ? U.el('span', { class: 'tag', style: { marginLeft: '6px', fontSize: '10px', color: '#8fa3c4' }, text: nd.mainFormation }) : null
         ]),
-        U.el('div', { class: 'rank-val', text: nd.n + ' 场 · ' + U.fmtPct(nd.rate, 0) }),
+        U.el('div', { class: 'rank-val' }, [
+          U.el('span', { text: nd.n + ' 场 · ' + U.fmtPct(nd.rate, 0) }),
+          nd.nFair > 0
+            ? U.el('span', { class: 'rank-fair', style: { color: U.rateColor(nd.rateFair) }, text: '公平 ' + U.fmtPct(nd.rateFair, 0) })
+            : U.el('span', { class: 'rank-fair off', text: '无公平样本' })
+        ]),
         U.el('div', { class: 'rank-bar' }, [
           U.el('i', {
             style: {
-              left: nd.netPower >= 0 ? '50%' : (50 - negPct * 50) + '%',
-              width: (nd.netPower >= 0 ? pct * 50 : negPct * 50) + '%',
+              left: pw >= 0 ? '50%' : (50 - negPct * 50) + '%',
+              width: (pw >= 0 ? pct * 50 : negPct * 50) + '%',
               background: barColor
             }
           }),

@@ -15,6 +15,9 @@ window.AC = window.AC || {};
     minAppear: 1,           // 节点最少出场次数
     minLevel: 0,            // 双方单位最低等级（0 = 不限）
     onlyFull: false,        // 只统计双方满编且人数相同
+    /* ---- 兵力差距控制：差距过大时胜负主要由兵力决定，体现不出阵容克制 ---- */
+    onlyForceParity: false, // 只统计双方总兵力接近的对局
+    forceParityGap: 3000,   // 「接近」的允许差距（双方原始兵力之差）
     excludeMirror: true,    // 排除同名内战
     excludeDraw: false,     // 平局是否退出胜率分母
     strongOnly: false,      // 只保留强克制
@@ -32,6 +35,13 @@ window.AC = window.AC || {};
 
   // 档位分界（对局双方平均）：<1.5 低；1.5~2.5 中；>=2.5 高
   const TIER_LOW = 1.5, TIER_HIGH = 2.5;
+
+  /**
+   * 「势均力敌」的兵力差上限（固定值，与过滤滑块解耦）。
+   * 过滤滑块管的是「哪些场次进入统计」，这里管的是「进入统计的场次里，哪些算公平样本」。
+   * 若两者共用同一阈值，把过滤设为不限就会让分层全部失效（没有均势样本）。
+   */
+  const FORCE_EVEN_GAP = 3000;
 
   function tierOf(level) {
     if (level === null || level === undefined) return null;
@@ -55,18 +65,22 @@ window.AC = window.AC || {};
     if (opts.onlyFull) {
       if (atk.size < 3 || def.size < 3 || atk.size !== def.size) return false;
     }
+    // 兵力差距控制：-1 表示不限（等价于关闭开关）
+    if (opts.onlyForceParity && opts.forceParityGap >= 0 && has(atk.origin) && has(def.origin)) {
+      if (Math.abs(atk.origin - def.origin) > opts.forceParityGap) return false;
+    }
     if (opts.minLevel > 0) {
       if (atk.levels.length && atk.minLevel < opts.minLevel) return false;
       if (def.levels.length && def.minLevel < opts.minLevel) return false;
     }
-    // 红度控制：避免「满红打白板」污染阵容克制结论
+    // 红度控制：避免「满红打白板」污染阵容克制结论（差值 -1 表示不限）
     if (has(atk.redAvg) && has(def.redAvg)) {
-      if (opts.onlyRedParity && Math.abs(atk.redAvg - def.redAvg) > opts.redParityGap) return false;
+      if (opts.onlyRedParity && opts.redParityGap >= 0 && Math.abs(atk.redAvg - def.redAvg) > opts.redParityGap) return false;
       if (opts.minRedAvg > 0 && Math.min(atk.redAvg, def.redAvg) < opts.minRedAvg) return false;
     }
     // 品级控制：同理
     if (has(atk.pinAvg) && has(def.pinAvg)) {
-      if (opts.onlyPinParity && Math.abs(atk.pinAvg - def.pinAvg) > opts.pinParityGap) return false;
+      if (opts.onlyPinParity && opts.pinParityGap >= 0 && Math.abs(atk.pinAvg - def.pinAvg) > opts.pinParityGap) return false;
     }
     // 培养度档位：只看某个红度/品级水平的对局（回答「高红环境下谁克谁」）
     if (has(atk.redAvg) && has(def.redAvg) && opts.redTier && opts.redTier !== 'all') {
@@ -89,6 +103,7 @@ window.AC = window.AC || {};
       rounds: 0,
       redSum: 0, redN: 0, pinSum: 0, pinN: 0,
       byRed: new Map(), byPin: new Map(),   // 培养度档位 -> 胜负（看清「什么红度下谁克谁」）
+      byForce: new Map(),                   // 兵力态势 -> 胜负：even 均势 / loUp lo 人多 / loDown lo 人少
       battleIds: []
     };
   }
@@ -105,7 +120,10 @@ window.AC = window.AC || {};
       troopCounts: {},
       players: {}, alliances: {}, formations: {},
       battleIds: [],
-      opponents: new Map()
+      opponents: new Map(),
+      // 兵力态势 -> 胜负：even 兵力接近 / adv 本方人多 / dis 本方人少
+      // 「强度」只认 even + dis，靠人多赢的场次不算本事
+      byForce: { even: { n: 0, win: 0, loss: 0, draw: 0 }, adv: { n: 0, win: 0, loss: 0, draw: 0 }, dis: { n: 0, win: 0, loss: 0, draw: 0 } }
     };
   }
 
@@ -147,13 +165,23 @@ window.AC = window.AC || {};
       const costAtk = (b.atk.wounded || 0) + (b.atk.dead || 0);
       const costDef = (b.def.wounded || 0) + (b.def.dead || 0);
 
-      const pairsOfNode = [[nAtk, b.atk, costAtk, costDef, 'atk'], [nDef, b.def, costDef, costAtk, 'def']];
+      const pairsOfNode = [[nAtk, b.atk, costAtk, costDef, 'atk', b.def], [nDef, b.def, costDef, costAtk, 'def', b.atk]];
       for (let t = 0; t < 2; t++) {
-        const node = pairsOfNode[t][0], side = pairsOfNode[t][1], role = pairsOfNode[t][4];
+        const node = pairsOfNode[t][0], side = pairsOfNode[t][1], role = pairsOfNode[t][4], foe = pairsOfNode[t][5];
         node.n++;
         node.costOut += pairsOfNode[t][2];
         node.costIn += pairsOfNode[t][3];
         node.battleIds.push(b.id);
+        // 兵力态势（本场视角）：本方兵力相对对手是多、是少、还是接近
+        if (has(side.origin) && has(foe.origin)) {
+          const d = side.origin - foe.origin;
+          const kind = Math.abs(d) <= FORCE_EVEN_GAP ? 'even' : (d > 0 ? 'adv' : 'dis');
+          const fb = node.byForce[kind];
+          fb.n++;
+          if (b.result === 'draw') fb.draw++;
+          else if (b.result === role) fb.win++;
+          else fb.loss++;
+        }
         if (side.player) node.players[side.player] = (node.players[side.player] || 0) + 1;
         if (side.alliance) node.alliances[side.alliance] = (node.alliances[side.alliance] || 0) + 1;
         if (side.formation) node.formations[side.formation] = (node.formations[side.formation] || 0) + 1;
@@ -191,6 +219,18 @@ window.AC = window.AC || {};
         pair.winLo++;
         if (s1IsAtk) pair.winLoAsAtk++; else pair.winLoAsDef++;
       } else pair.winHi++;
+
+      // 兵力态势（lo 视角）：lo 方兵力相对 hi 是多、是少、还是接近
+      if (has(s1.origin) && has(s2.origin)) {
+        const dLo = s1.origin - s2.origin;
+        const kind = Math.abs(dLo) <= FORCE_EVEN_GAP ? 'even' : (dLo > 0 ? 'loUp' : 'loDown');
+        let fb = pair.byForce.get(kind);
+        if (!fb) { fb = { n: 0, winLo: 0, winHi: 0, draw: 0 }; pair.byForce.set(kind, fb); }
+        fb.n++;
+        if (b.result === 'draw') fb.draw++;
+        else if (loWon) fb.winLo++;
+        else fb.winHi++;
+      }
 
       // 培养度分档：记下这对阵容在不同红度/品级水平下的胜负
       if (has(s1.redAvg) && has(s2.redAvg)) {
@@ -236,6 +276,47 @@ window.AC = window.AC || {};
       p.rateLo = rateLo;
       p.shrunkLo = (rateLo * denom + 0.5 * k) / (denom + k);
       p.score = p.shrunkLo - 0.5;                                     // > 0 表示 lo 克 hi
+
+      /* ---- 公平口径：只认「势均力敌」与「以少打多」----
+         靠兵力优势赢下来的场次不能算强度，否则堆兵就能刷高压制力。 */
+      function bucketOf(keys) {
+        let n = 0, winLo = 0, winHi = 0, draw = 0;
+        keys.forEach(function (fk) {
+          const bb = p.byForce.get(fk);
+          if (!bb) return;
+          n += bb.n; winLo += bb.winLo; winHi += bb.winHi; draw += bb.draw;
+        });
+        return { n: n, winLo: winLo, winHi: winHi, draw: draw };
+      }
+      function rateIn(bucket) {
+        if (!bucket || !bucket.n) return null;
+        const dec = bucket.winLo + (bucket.winHi || 0);
+        const den = opts.excludeDraw ? dec : bucket.n;
+        return den ? (bucket.winLo + (opts.excludeDraw ? 0 : bucket.draw * 0.5)) / den : null;
+      }
+
+      const bEven = bucketOf(['even']);
+      const bLoFair = bucketOf(['even', 'loDown']);   // lo 的公平样本：均势 + lo 人少
+      const bHiFair = bucketOf(['even', 'loUp']);     // hi 的公平样本：均势 + hi 人少
+      const bLoUp = p.byForce.get('loUp') || { n: 0 };
+      const bLoDown = p.byForce.get('loDown') || { n: 0 };
+
+      p.nEven = bEven.n; p.rateLoEven = rateIn(bEven);
+      p.nFair = bLoFair.n; p.rateLoFair = rateIn(bLoFair);
+      p.nFairHi = bHiFair.n; p.rateHiFair = rateIn(bHiFair);
+      p.nLoUp = bLoUp.n; p.nLoDown = bLoDown.n;
+      p.rateLoUp = rateIn(bLoUp);
+      p.rateLoDown = rateIn(bLoDown);
+
+      if (p.nFair > 0) {
+        const decFair = opts.excludeDraw ? (bLoFair.winLo + bLoFair.winHi) : bLoFair.n;
+        p.shrunkLoFair = (p.rateLoFair * decFair + 0.5 * k) / (decFair + k);
+        p.scoreFair = p.shrunkLoFair - 0.5;
+      } else {
+        // 完全没有公平样本（例如所有对局都靠人多）：强度无从谈起，记中性
+        p.shrunkLoFair = 0.5;
+        p.scoreFair = 0;
+      }
       p.conf = denom / (denom + k);
       p.avgRound = p.n ? p.rounds / p.n : 0;
       p.lossLo = p.originLo ? p.costLo / p.originLo : null;
@@ -284,16 +365,40 @@ window.AC = window.AC || {};
       for (const d in node.displayCount) { if (node.displayCount[d] > bestC) { bestC = node.displayCount[d]; best = d; } }
       node.display = best || node.key;
 
+      // 兵力态势各档胜率：看清这个阵容主要是靠什么赢的
+      function nodeForceRate(fb) {
+        const dec = fb.win + fb.loss;
+        const den = opts.excludeDraw ? dec : fb.n;
+        return den ? (fb.win + (opts.excludeDraw ? 0 : fb.draw * 0.5)) / den : null;
+      }
+      node.nEven = node.byForce.even.n; node.rateEven = nodeForceRate(node.byForce.even);
+      node.nAdv = node.byForce.adv.n; node.rateAdv = nodeForceRate(node.byForce.adv);
+      node.nDis = node.byForce.dis.n; node.rateDis = nodeForceRate(node.byForce.dis);
+      // 公平样本 = 势均力敌 + 以少打多（靠人多赢的不算本事）
+      const fairNode = {
+        n: node.byForce.even.n + node.byForce.dis.n,
+        win: node.byForce.even.win + node.byForce.dis.win,
+        loss: node.byForce.even.loss + node.byForce.dis.loss,
+        draw: node.byForce.even.draw + node.byForce.dis.draw
+      };
+      node.nFair = fairNode.n;
+      node.rateFair = nodeForceRate(fairNode);
+
       // 净压制力：对所有对手的加权平均优势
-      let wsum = 0, w = 0;
+      //   netPower     旧口径（含靠兵力优势赢的场次，会虚高）
+      //   netPowerFair 公平口径，只用「势均力敌 + 以少打多」的场次——衡量真实强度
+      let wsum = 0, w = 0, wsumF = 0, wF = 0;
       node.opponents.forEach(function (o, otherKey) {
         const p = pairMap.get(node.key < otherKey ? node.key + '||' + otherKey : otherKey + '||' + node.key);
         if (!p) return;
-        const mine = p.lo === node.key ? p.score : -p.score;
         const wt = Math.sqrt(o.n);
+        const mine = p.lo === node.key ? p.score : -p.score;
         wsum += mine * wt; w += wt;
+        const mineF = p.lo === node.key ? p.scoreFair : -p.scoreFair;
+        wsumF += mineF * wt; wF += wt;
       });
       node.netPower = w ? wsum / w : 0;
+      node.netPowerFair = wF ? wsumF / wF : 0;
       // 出场最多的阵型，作为该阵容的惯用阵
       let bf = '', bc = -1;
       for (const f in node.formations) { if (node.formations[f] > bc) { bc = node.formations[f]; bf = f; } }

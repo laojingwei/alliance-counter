@@ -8,7 +8,7 @@
 <meta http-equiv="Pragma" content="no-cache" />
 <meta http-equiv="Expires" content="0" />
 <title>xww-三国谋定天下：同盟对战 · 阵容克制关系图</title>
-<link rel="stylesheet" href="css/style.css?v=202610120039a" />
+<link rel="stylesheet" href="css/style.css?v=202610121450a" />
 </head>
 <body data-repo="https://github.com/laojingwei/alliance-counter">
 
@@ -92,6 +92,13 @@
       </label>
 
       <label class="check"><input type="checkbox" id="onlyFull" checked /> 只统计双方满编且人数相同的对局</label>
+      <label class="check"><input type="checkbox" id="onlyForceParity" checked /> 只统计<b>双方兵力接近</b>的对局</label>
+      <p class="hint" style="margin:-4px 0 9px 22px">兵力差距过大时胜负主要由兵力决定，体现不出阵容克制</p>
+      <label class="field">
+        <span class="field-label">兵力「接近」允许的差距 <b id="forceGapVal">3,000</b></span>
+        <input type="range" id="forceGap" min="-1" max="20000" step="500" value="3000" />
+      </label>
+      <p class="hint" style="margin:-6px 0 10px">拖到最左「不限」＝不比较兵力；设为 0 则要求双方兵力完全相同</p>
       <label class="check"><input type="checkbox" id="excludeMirror" checked /> 排除同名阵容内战（无克制方向）</label>
       <label class="check"><input type="checkbox" id="excludeDraw" /> 平局不计入胜率分母</label>
 
@@ -100,8 +107,9 @@
       <p class="hint" style="margin:-4px 0 9px 22px">排除「满红碾压白板」的场次，避免污染克制结论</p>
       <label class="field">
         <span class="field-label">红度「对等」允许的差值 <b id="redGapVal">1</b></span>
-        <input type="range" id="redGap" min="0" max="3" step="1" value="1" />
+        <input type="range" id="redGap" min="-1" max="3" step="1" value="1" />
       </label>
+      <p class="hint" style="margin:-6px 0 10px">拖到最左「不限」＝不比较双方红度差距；设为 0 则要求红度完全相同</p>
       <label class="field">
         <span class="field-label">双方最低平均红度 <b id="minRedAvgVal">0</b></span>
         <input type="range" id="minRedAvg" min="0" max="5" step="1" value="0" />
@@ -300,24 +308,24 @@
 <input type="file" id="fileInput" accept=".csv,.txt" multiple hidden />
 <input type="file" id="jsonInput" accept=".json" hidden />
 
-<script src="js/util.js?v=202610120039a"></script>
-<script src="js/csv.js?v=202610120039a"></script>
-<script src="js/model.js?v=202610120039a"></script>
-<script src="js/detail.js?v=202610120039a"></script>
-<script src="js/anonymize.js?v=202610120039a"></script>
-<script src="js/store.js?v=202610120039a"></script>
-<script src="js/analyzer.js?v=202610120039a"></script>
-<script src="js/graph.js?v=202610120039a"></script>
-<script src="js/matrix.js?v=202610120039a"></script>
-<script src="js/rank.js?v=202610120039a"></script>
-<script src="js/table.js?v=202610120039a"></script>
-<script src="js/alliance.js?v=202610120039a"></script>
-<script src="js/heroes.js?v=202610120039a"></script>
-<script src="js/mirror.js?v=202610120039a"></script>
-<script src="js/gear.js?v=202610120039a"></script>
-<script src="js/player.js?v=202610120039a"></script>
-<script src="js/sample-data.js?v=202610120039a"></script>
-<script src="js/update.js?v=202610120039a"></script>
-<script src="js/app.js?v=202610120039a"></script>
+<script src="js/util.js?v=202610121450a"></script>
+<script src="js/csv.js?v=202610121450a"></script>
+<script src="js/model.js?v=202610121450a"></script>
+<script src="js/detail.js?v=202610121450a"></script>
+<script src="js/anonymize.js?v=202610121450a"></script>
+<script src="js/store.js?v=202610121450a"></script>
+<script src="js/analyzer.js?v=202610121450a"></script>
+<script src="js/graph.js?v=202610121450a"></script>
+<script src="js/matrix.js?v=202610121450a"></script>
+<script src="js/rank.js?v=202610121450a"></script>
+<script src="js/table.js?v=202610121450a"></script>
+<script src="js/alliance.js?v=202610121450a"></script>
+<script src="js/heroes.js?v=202610121450a"></script>
+<script src="js/mirror.js?v=202610121450a"></script>
+<script src="js/gear.js?v=202610121450a"></script>
+<script src="js/player.js?v=202610121450a"></script>
+<script src="js/sample-data.js?v=202610121450a"></script>
+<script src="js/update.js?v=202610121450a"></script>
+<script src="js/app.js?v=202610121450a"></script>
 </body>
 </html>

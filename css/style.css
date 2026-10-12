@@ -205,6 +205,11 @@ input[type=range]::-moz-range-thumb {
   width: 15px; height: 15px; border: none; border-radius: 50%;
   background: #4ea8ff; cursor: pointer;
 }
+/* 开关未勾选时，它的参数滑块置灰——表明该参数当前不生效 */
+input[type=range]:disabled { opacity: .3; cursor: not-allowed; }
+input[type=range]:disabled::-webkit-slider-thumb { background: #4a5876; box-shadow: none; cursor: not-allowed; }
+input[type=range]:disabled::-moz-range-thumb { background: #4a5876; cursor: not-allowed; }
+.field.is-off .field-label { opacity: .45; }
 
 .check { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-dim); margin-bottom: 9px; cursor: pointer; }
 .check input { accent-color: #4ea8ff; width: 14px; height: 14px; cursor: pointer; }
@@ -285,7 +290,7 @@ canvas { display: block; width: 100%; height: 100%; }
 .rank-wrap::-webkit-scrollbar-thumb { background: #26334f; border-radius: 8px; }
 
 .rank-row {
-  display: grid; grid-template-columns: 30px minmax(150px, 1.4fr) 92px minmax(110px, 2fr) 58px 68px 58px;
+  display: grid; grid-template-columns: 30px minmax(140px, 1.3fr) 150px minmax(96px, 1.8fr) 54px 64px 54px;
   align-items: center; gap: 10px;
   padding: 7px 10px; margin-bottom: 5px;
   background: rgba(22, 32, 58, .6);
@@ -302,6 +307,8 @@ canvas { display: block; width: 100%; height: 100%; }
 .rank-bar { position: relative; height: 8px; background: #1b2540; border-radius: 5px; overflow: hidden; }
 .rank-bar i { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 5px; transition: width .6s cubic-bezier(.2,.8,.2,1); }
 .rank-val { font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; color: var(--text-dim); }
+.rank-fair { display: inline-block; margin-left: 7px; font-weight: 700; }
+.rank-fair.off { color: #5d6f8f; font-weight: 400; font-size: 11px; }
 
 /* ---------------- 数据表 ---------------- */
 .table-wrap { position: absolute; inset: 0 0 40px 0; overflow: auto; }
@@ -337,6 +344,30 @@ canvas { display: block; width: 100%; height: 100%; }
 .insp-cell { background: rgba(22, 32, 58, .7); border: 1px solid var(--line-soft); border-radius: 9px; padding: 8px 10px; }
 .insp-cell .k { font-size: 11px; color: var(--text-faint); }
 .insp-cell .v { font-size: 15px; font-weight: 600; margin-top: 2px; font-variant-numeric: tabular-nums; }
+
+/* 阵容详情里的操作按钮（推荐配置等） */
+.insp-actions { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin: 8px 0 10px; }
+.insp-btn {
+  font-size: 12px; padding: 5px 13px; border-radius: 7px; cursor: pointer; transition: .15s;
+  border: 1px solid rgba(78, 168, 255, .5); background: rgba(78, 168, 255, .14); color: #9dc9ff;
+}
+.insp-btn:hover { background: rgba(78, 168, 255, .3); color: #dbe7ff; border-color: rgba(78, 168, 255, .85); }
+.insp-btn-tip { font-size: 11px; color: #5d6f8f; }
+
+/* 兵力态势拆解：强度只认「势均力敌」与「以少打多」 */
+.force-split { background: rgba(22, 32, 58, .5); border: 1px solid var(--line-soft);
+  border-radius: 9px; padding: 9px 11px; margin: 0 0 10px; }
+.force-split .fs-title { font-size: 11px; color: var(--text-faint); margin-bottom: 7px; letter-spacing: .4px; }
+.fs-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 11.5px; }
+.fs-row.muted { opacity: .55; }
+.fs-row .fs-k { flex: none; width: 62px; color: #c7d6f0; }
+.fs-row .fs-n { flex: none; width: 52px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.fs-row .fs-v { flex: none; width: 56px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.fs-tag { font-size: 9.5px; border-radius: 4px; padding: 0 5px; line-height: 15px;
+  color: #35c46b; background: rgba(53, 196, 107, .13); }
+.fs-tag.off { color: #7d90b0; background: rgba(125, 144, 176, .13); }
+.force-split .fs-note { margin-top: 7px; padding-top: 7px; border-top: 1px dashed var(--line-soft);
+  font-size: 11px; color: #8fa3c4; display: flex; align-items: baseline; gap: 4px; flex-wrap: wrap; }
 
 .insp-section { margin-top: 14px; }
 .insp-section h4 { margin: 0 0 8px; font-size: 12px; color: var(--text-dim); font-weight: 600; letter-spacing: .5px; }
@@ -598,7 +629,7 @@ canvas { display: block; width: 100%; height: 100%; }
 /* 主力玩家表格 */
 .ally-table { font-size: 12px; }
 .at-head, .at-row {
-  display: grid; grid-template-columns: 1.2fr 60px 62px 66px minmax(0, 1.6fr);
+  display: grid; grid-template-columns: 1.1fr 56px 58px 60px 48px minmax(0, 1.5fr);
   gap: 8px; align-items: center; padding: 6px 8px;
 }
 .at-head { color: var(--text-faint); font-size: 11px; border-bottom: 1px solid var(--line-soft); }
@@ -614,6 +645,36 @@ canvas { display: block; width: 100%; height: 100%; }
 }
 .at-detail:hover { background: rgba(78, 168, 255, .26); color: #dbe7ff; border-color: rgba(78, 168, 255, .7); }
 .at-rate { font-variant-numeric: tabular-nums; font-weight: 600; }
+.at-red { font-variant-numeric: tabular-nums; font-weight: 600; }
+
+/* ---- 主力玩家筛选栏：三组条件可任意叠加 ---- */
+.pt-filter {
+  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 18px;
+  padding: 9px 11px; margin-bottom: 10px;
+  background: rgba(22, 32, 58, .5); border: 1px solid var(--line-soft); border-radius: 9px;
+}
+.pt-filter .ptf { display: block; min-width: 132px; flex: 0 0 auto; }
+.pt-filter .ptf-k { display: block; font-size: 11px; color: var(--text-faint); margin-bottom: 5px; }
+.pt-filter .ptf-k b { color: var(--accent); font-variant-numeric: tabular-nums; }
+.pt-filter input[type=range] { width: 132px; }
+.ptf-group { display: block; }
+.ptf-reds { display: flex; gap: 4px; flex-wrap: wrap; }
+.ptf-red {
+  font-size: 11px; padding: 2px 7px; border-radius: 6px; cursor: pointer; transition: .15s;
+  border: 1px solid #2a3757; background: #16203a; color: #8fa3c4;
+}
+.ptf-red:hover { border-color: rgba(78, 168, 255, .5); color: #dbe7ff; }
+.ptf-red.on { border-color: rgba(78, 168, 255, .85); background: rgba(78, 168, 255, .22); color: #dbe7ff; font-weight: 600; }
+.ptf-tip { color: #5d6f8f; font-size: 10px; margin-left: 4px; }
+.ptf-reset {
+  font-size: 11px; padding: 3px 10px; border-radius: 6px; cursor: pointer;
+  border: 1px solid #2a3757; background: #16203a; color: #8fa3c4; transition: .15s;
+}
+.ptf-reset:hover { border-color: rgba(78, 168, 255, .5); color: #dbe7ff; }
+.pt-sum { font-size: 11.5px; color: var(--text-faint); margin-bottom: 6px; }
+.pt-sum b { color: var(--accent); font-variant-numeric: tabular-nums; }
+.pt-more { color: #5d6f8f; margin-left: 4px; }
+.pt-empty { padding: 12px 8px; font-size: 12px; color: var(--text-faint); }
 
 /* 反制推荐 */
 .advice-group { margin-bottom: 16px; }
@@ -1056,6 +1117,14 @@ details.fold > .fold-summary + * { margin-top: 0; }
 /* ---- 阵容配置详情浮层（同一套阵容的不同配置） ---- */
 .hc-panel { width: min(1080px, 100%); }
 .hc-count { color: #7d90b0; font-size: 12px; margin-left: 6px; }
+/* 配置浮窗的排序切换 */
+.hc-sort { display: inline-flex; gap: 4px; margin-left: 10px; }
+.hc-sort-btn {
+  font-size: 11px; padding: 2px 9px; border-radius: 6px; cursor: pointer; transition: .15s;
+  border: 1px solid #2a3757; background: #16203a; color: #8fa3c4;
+}
+.hc-sort-btn:hover { border-color: rgba(78, 168, 255, .5); color: #dbe7ff; }
+.hc-sort-btn.on { border-color: rgba(78, 168, 255, .85); background: rgba(78, 168, 255, .22); color: #dbe7ff; font-weight: 600; }
 .hc-body { overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 14px; }
 .hc-body > * { flex: none; }
 

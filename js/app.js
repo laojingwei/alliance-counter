@@ -19,6 +19,8 @@ window.AC = window.AC || {};
     minAppear: 3,
     minLevel: 40,
     onlyFull: true,
+    onlyForceParity: true,  // 只看双方总兵力接近的对局
+    forceParityGap: 3000,   // 兵力差距阈值
     excludeMirror: true,
     excludeDraw: false,
     strongOnly: false,
@@ -103,6 +105,89 @@ window.AC = window.AC || {};
       },
       onLayoutChange: function () { updateFoot(); }
     });
+
+    // 验证用 / 便捷入口：#rec 选中第一个阵容并打开「推荐配置」浮窗
+    if (location.hash === '#rec') {
+      setTimeout(function () {
+        if (state.result && state.result.nodeList.length && graph && graph.cb && graph.cb.onSelect) {
+          graph.cb.onSelect({ type: 'node', id: state.result.nodeList[0].key });
+        }
+        setTimeout(function () {
+          const btn = document.querySelector('.insp-btn');
+          if (btn) btn.click();
+          // 再验证排序切换：记录「按场次」与「按胜率」下的首套配置
+          setTimeout(function () {
+            const read = function () {
+              const head = document.querySelector('.hc-cfg-head');
+              const sub = document.querySelector('.hc-count');
+              return (head ? head.textContent.replace(/\s+/g, ' ').trim() : '-') + ' ｜ ' +
+                (sub ? sub.textContent.trim() : '-');
+            };
+            const byN = read();
+            const btns = document.querySelectorAll('.hc-sort-btn');
+            if (btns[1]) btns[1].click();
+            const byRate = read();
+            document.title = 'SORTTEST 按场次[' + byN + '] 按胜率[' + byRate + ']';
+          }, 800);
+        }, 700);
+      }, 1500);
+    }
+
+    // 验证用：#pfTest 依次叠加「红度多选」「最低场次」筛选，检查主力玩家表格是否联动
+    if (location.hash === '#pfTest') {
+      setTimeout(function () {
+        const sumOf = function () {
+          const el = document.querySelector('.pt-sum');
+          return el ? el.textContent.trim() : '(无)';
+        };
+        const a0 = sumOf();
+        const reds = document.querySelectorAll('.ptf-red');
+        if (reds[1]) reds[1].click();      // 1 红
+        if (reds[2]) reds[2].click();      // 2 红
+        const a1 = sumOf();
+        const ranges = document.querySelectorAll('.pt-filter input[type=range]');
+        if (ranges[0]) { ranges[0].value = '20'; ranges[0].dispatchEvent(new Event('input', { bubbles: true })); }
+        const a2 = sumOf();
+        const rows = document.querySelectorAll('.pt-filter ~ div .at-row').length;
+        const reset = document.querySelector('.ptf-reset');
+        if (reset) reset.click();
+        const a3 = sumOf();
+        document.title = 'PFTEST 初始[' + a0 + '] +1红2红[' + a1 + '] +场次≥20[' + a2 + '] 行数' + rows + ' 重置后[' + a3 + ']';
+      }, 1600);
+    }
+
+    // 验证用：#forceTest 关闭兵力过滤，检查「均势/以多打少/以少打多」三档分层是否正确
+    if (location.hash === '#forceTest') {
+      setTimeout(function () {
+        filters.onlyForceParity = false;
+        filters.minAppear = 3;
+        if (typeof syncControls === 'function') syncControls();
+        recompute();
+        setTimeout(function () {
+          // 三种设置下的保留场次应当满足：不限 与 关闭开关 完全一致
+          const probe = function (on, gap) {
+            const f2 = Object.assign({}, filters, { onlyForceParity: on, forceParityGap: gap });
+            return AC.analyzer.analyze(store.battles, f2).battles.length;
+          };
+          const r3000 = probe(true, 3000);
+          const rUnlimited = probe(true, -1);
+          const rOff = probe(false, 3000);
+          // 用「不限」跑一遍，看三档分层是否恢复（说明分层阈值已与过滤解耦）
+          const rShow = AC.analyzer.analyze(store.battles, Object.assign({}, filters, { onlyForceParity: true, forceParityGap: -1 }));
+          state.result = rShow;
+          const nodes = state.result.nodeList.slice()
+            .sort(function (a, b) { return b.n - a.n; }).slice(0, 4);
+          document.title = 'FORCETEST gap3000=' + r3000 + ' gap不限=' + rUnlimited + ' 关开关=' + rOff +
+            ' 不限等于关开关:' + (rUnlimited === rOff ? '是' : '否') + ' || ' + nodes.map(function (n) {
+            return n.display.replace(/\s/g, '').slice(0, 10) +
+              ' 均' + n.byForce.even.n + '/多' + n.byForce.adv.n + '/少' + n.byForce.dis.n +
+              ' 总' + U.fmtPct(n.rate, 0) +
+              ' 公平' + (n.rateFair === null ? '-' : U.fmtPct(n.rateFair, 0)) +
+              ' 压' + U.fmtSigned(n.netPowerFair, 1);
+          }).join(' || ');
+        }, 700);
+      }, 1400);
+    }
 
     // URL 带 #g3d 直接切到 3D（便于查看 / 分享）；#dragtest 额外做拖动自检
     if (location.hash === '#g3d') {
@@ -265,11 +350,15 @@ window.AC = window.AC || {};
     bindRange('#topN', '#topNVal', 'topN', function (v) { return v; }, true);
 
     bindCheck('#onlyFull', 'onlyFull');
+    bindCheck('#onlyForceParity', 'onlyForceParity');
+    bindRange('#forceGap', '#forceGapVal', 'forceParityGap', function (v) { return fmtGap(v); });
+    linkDisable('#onlyForceParity', ['#forceGap']);
     bindCheck('#excludeMirror', 'excludeMirror');
     bindCheck('#excludeDraw', 'excludeDraw');
     bindCheck('#onlyRedParity', 'onlyRedParity');
     bindCheck('#onlyPinParity', 'onlyPinParity');
-    bindRange('#redGap', '#redGapVal', 'redParityGap', function (v) { return v; });
+    bindRange('#redGap', '#redGapVal', 'redParityGap', function (v) { return fmtGap(v); });
+    linkDisable('#onlyRedParity', ['#redGap']);
     bindRange('#minRedAvg', '#minRedAvgVal', 'minRedAvg', function (v) { return v; });
 
     // 培养度分层：切换后整张克制网络都按该档位重算
@@ -283,6 +372,7 @@ window.AC = window.AC || {};
       Object.assign(filters, {
         dimension: 'comp', minPair: 2, minAppear: 3, minLevel: 40,
         onlyFull: true, excludeMirror: true, excludeDraw: false, strongOnly: false, topN: 30,
+        onlyForceParity: true, forceParityGap: 3000,
         onlyRedParity: true, redParityGap: 1, minRedAvg: 0, onlyPinParity: false,
         redTier: 'all', pinTier: 'all'
       });
@@ -394,22 +484,51 @@ window.AC = window.AC || {};
     });
   }
 
+  /** 差值滑块的显示：-1 = 不限 */
+  function fmtGap(v, suffix) {
+    return Number(v) < 0 ? '不限' : U.fmtInt(v) + (suffix || '');
+  }
+
+  /** 开关未勾选时，把它的参数滑块置灰——表明该参数当前不生效 */
+  function linkDisable(checkSel, rangeSels) {
+    const box = $(checkSel);
+    const list = rangeSels.map(function (s) { return $(s); }).filter(Boolean);
+    const sync = function () {
+      list.forEach(function (r) {
+        r.disabled = !box.checked;
+        const f = r.closest('.field');
+        if (f) f.classList.toggle('is-off', !box.checked);
+      });
+    };
+    box.__syncDisable = sync;
+    box.addEventListener('change', sync);
+    sync();
+  }
+
   function syncControls() {
     $('#minPair').value = filters.minPair; $('#minPairVal').textContent = filters.minPair;
     $('#minAppear').value = filters.minAppear; $('#minAppearVal').textContent = filters.minAppear;
     $('#minLevel').value = filters.minLevel; $('#minLevelVal').textContent = filters.minLevel;
     $('#topN').value = filters.topN; $('#topNVal').textContent = filters.topN;
     $('#onlyFull').checked = filters.onlyFull;
+    $('#onlyForceParity').checked = filters.onlyForceParity;
+    $('#forceGap').value = filters.forceParityGap;
+    $('#forceGapVal').textContent = fmtGap(filters.forceParityGap);
     $('#excludeMirror').checked = filters.excludeMirror;
     $('#excludeDraw').checked = filters.excludeDraw;
     $('#onlyStrong').checked = filters.strongOnly;
     $('#onlyRedParity').checked = filters.onlyRedParity;
     $('#onlyPinParity').checked = filters.onlyPinParity;
-    $('#redGap').value = filters.redParityGap; $('#redGapVal').textContent = filters.redParityGap;
+    $('#redGap').value = filters.redParityGap; $('#redGapVal').textContent = fmtGap(filters.redParityGap);
     $('#minRedAvg').value = filters.minRedAvg; $('#minRedAvgVal').textContent = filters.minRedAvg;
     $$('#redTierSeg .seg-btn').forEach(function (b) { b.classList.toggle('active', b.dataset.tier === filters.redTier); });
     $$('#pinTierSeg .seg-btn').forEach(function (b) { b.classList.toggle('active', b.dataset.tier === filters.pinTier); });
     $$('#dimSeg .seg-btn').forEach(function (b) { b.classList.toggle('active', b.dataset.dim === filters.dimension); });
+    // 复位后同步「开关关闭 → 参数滑块置灰」的状态
+    ['#onlyForceParity', '#onlyRedParity'].forEach(function (sel) {
+      const box = $(sel);
+      if (box && box.__syncDisable) box.__syncDisable();
+    });
   }
 
   const recomputeDebounced = U.debounce(function () { recompute(); }, 200);
@@ -609,6 +728,7 @@ window.AC = window.AC || {};
   const VALID_RULES = {
     excludeMirror: false,  // 内战保留
     onlyFull: true,        // 人数不满 3v3 或双方人数不等：残缺记录
+    onlyForceParity: false, // 兵力差距大不算残缺记录，导出内置数据时一律保留
     minLevel: 30,          // 单位等级低于 30：明显是异常数据（默认分析门槛是 40，这里放宽以免误删）
     minPair: 1,
     minAppear: 1,
@@ -765,6 +885,7 @@ window.AC = window.AC || {};
 
   function recompute(withAnim) {
     state.result = AC.analyzer.analyze(store.battles, filters);
+    recCache = null;   // 数据变了，推荐配置的聚合缓存作废
 
     const r = state.result;
     $('#graphEmpty').style.display = r.stats.totalKept ? 'none' : 'flex';
@@ -872,6 +993,64 @@ window.AC = window.AC || {};
     renderNodeInspector(node);
   }
 
+  /* 阵容推荐配置：从同盟画像里收集这套阵容被用过的全部配置（懒聚合 + 随数据失效） */
+  let recCache = null;
+
+  function recommendedConfigs(node) {
+    if (!AC.allianceAnalysis || !AC.allianceAnalysis.build) return [];
+    if (!recCache) recCache = AC.allianceAnalysis.build(state.result) || [];
+
+    const map = new Map();
+    recCache.forEach(function (ally) {
+      (ally.playerList || []).forEach(function (p) {
+        (p.comps || []).forEach(function (pc) {
+          if (pc.key !== node.key) return;
+          (pc.configList || []).forEach(function (cfg) {
+            let e = map.get(cfg.sig);
+            if (!e) {
+              e = {
+                sig: cfg.sig, heroes: cfg.heroes, formation: cfg.formation,
+                troopSig: cfg.troopSig || node.troopSig, n: 0, win: 0, draw: 0, lastTs: 0
+              };
+              map.set(cfg.sig, e);
+            }
+            e.n += cfg.n; e.win += cfg.win; e.draw += cfg.draw;
+            if (cfg.lastTs && cfg.lastTs > e.lastTs) e.lastTs = cfg.lastTs;
+          });
+        });
+      });
+    });
+
+    return Array.from(map.values()).map(function (c) {
+      c.rate = (c.win + c.draw * 0.5) / (c.n || 1);
+      const reds = (c.heroes || []).map(function (h) { return h.red; })
+        .filter(function (v) { return v !== null && v !== undefined; });
+      c.redAvg = reds.length ? reds.reduce(function (a, b) { return a + b; }, 0) / reds.length : null;
+      return c;
+    }).sort(function (a, b) { return b.n - a.n || b.rate - a.rate; });
+  }
+
+  function openRecommendedConfig(node) {
+    const all = recommendedConfigs(node);
+    const SHOW = 20;                       // 变体可能上百套，只渲染排序后的前若干套
+    const label = { n: '使用场次', rate: '胜率' };
+    AC.openConfigList(
+      node.display + ' · 推荐配置',
+      function (key, shown) {
+        return '共 ' + all.length + ' 套 · 按' + (label[key] || '场次') + '排序'
+          + (all.length > SHOW ? '，显示前 ' + SHOW + ' 套' : '');
+      },
+      all.slice(0, SHOW),
+      {
+        defaultSort: 'n',
+        sorts: [
+          { key: 'n', label: '按场次', tip: '最主流、最多人用的配置排在前面' },
+          { key: 'rate', label: '按胜率', tip: '胜率最高的配置排在前面（小样本已做收缩保护，避免 1 场 100% 霸榜）' }
+        ]
+      }
+    );
+  }
+
   function renderNodeInspector(node) {
     const r = state.result;
     const insp = $('#inspector');
@@ -882,14 +1061,54 @@ window.AC = window.AC || {};
       U.el('h2', { class: 'insp-title' }, [U.compWithTroop(node.display, node.troopSig)])
     ]));
 
+    // 推荐配置：汇总这套阵容被用过的全部配置，按使用场次排序（照着抄即可）
+    if (filters.dimension === 'comp' && AC.openConfigList) {
+      insp.appendChild(U.el('div', { class: 'insp-actions' }, [
+        U.el('button', {
+          class: 'insp-btn', text: '推荐配置',
+          title: '看看这套阵容大家都怎么配（技能 / 兵书 / 装备 / 战马 / 阵型），按使用场次排序',
+          onclick: function () { openRecommendedConfig(node); }
+        }),
+        U.el('span', { class: 'insp-btn-tip', text: '汇总所有玩家用过的配置，按使用场次排序' })
+      ]));
+    }
+
     insp.appendChild(U.el('div', { class: 'insp-grid' }, [
       cell('出场', node.n + ' 场'),
       cell('胜率', U.fmtPct(node.rate, 1)),
       cell('战绩', node.win + '胜 ' + node.loss + '负 ' + node.draw + '平'),
-      cell('净压制力', U.fmtSigned(node.netPower, 1)),
+      cell('净压制力', U.fmtSigned(node.netPowerFair, 1)),
       cell('场均战损', U.fmtShort(node.avgCostOut)),
       cell('战损比', node.exchange === null ? '-' : node.exchange.toFixed(2))
     ]));
+
+    // 兵力态势拆解：压制力只看「势均力敌」与「以少打多」，靠兵力优势刷出来的不算强度
+    if (node.byForce && (node.nEven > 0 || node.nDis > 0 || node.nAdv > 0)) {
+      const fsRow = function (label, fb, rate, counts) {
+        return U.el('div', { class: 'fs-row' + (counts ? '' : ' muted') }, [
+          U.el('span', { class: 'fs-k', text: label }),
+          U.el('span', { class: 'fs-n', text: fb.n + ' 场' }),
+          U.el('span', {
+            class: 'fs-v',
+            style: { color: rate === null ? '#5d6f8f' : U.rateColor(rate) },
+            text: rate === null ? '-' : U.fmtPct(rate, 1)
+          }),
+          counts ? U.el('span', { class: 'fs-tag', text: '计入强度' }) : U.el('span', { class: 'fs-tag off', text: '不计入' })
+        ]);
+      };
+      insp.appendChild(U.el('div', { class: 'force-split' }, [
+        U.el('div', { class: 'fs-title', text: '兵力态势拆解' }),
+        fsRow('势均力敌', node.byForce.even, node.rateEven, true),
+        fsRow('以少打多', node.byForce.dis, node.rateDis, true),
+        fsRow('以多打少', node.byForce.adv, node.rateAdv, false),
+        U.el('div', { class: 'fs-note' }, [
+          U.el('span', { text: '公平压制力（均势+劣势）' }),
+          U.el('b', { style: { color: U.rateColor(0.5 + node.netPowerFair) }, text: U.fmtSigned(node.netPowerFair, 1) }),
+          U.el('span', { style: { color: '#5d6f8f' }, text: '　旧口径（含以多打少）' }),
+          U.el('span', { style: { color: '#8fa3c4' }, text: U.fmtSigned(node.netPower, 1) })
+        ])
+      ]));
+    }
 
     // 常用阵型分布（阵容维度下才有意义）
     if (filters.dimension === 'comp' && Object.keys(node.formations).length) {
@@ -1175,7 +1394,8 @@ window.AC = window.AC || {};
       if (!nd) return;
       html = '<b>' + esc(nd.display) + '</b>' + U.troopHtml(nd.troopSig) +
         '<br>出场 ' + nd.n + ' 场 · 胜率 ' + U.fmtPct(nd.rate) +
-        '<br>净压制力 ' + U.fmtSigned(nd.netPower) +
+        '<br>净压制力 ' + U.fmtSigned(nd.netPowerFair) +
+        (nd.nFair > 0 ? '（公平 ' + nd.nFair + ' 场 / 胜率 ' + U.fmtPct(nd.rateFair, 0) + '）' : '') +
         (nd.mainFormation ? '<br>常用阵型 ' + esc(nd.mainFormation) : '') +
         (nd.redAvg !== null && nd.redAvg !== undefined ? '<br>平均红度 ' + nd.redAvg.toFixed(2) : '');
     } else {
@@ -1242,7 +1462,7 @@ window.AC = window.AC || {};
 
   /* ================= 版本与缓存自检 ================= */
 
-  const BUILD = '202610120039a';
+  const BUILD = '202610121450a';
 
   /**
    * 仓库改动后浏览器可能仍用缓存的旧 js/css，导致新功能（如兵种徽章）不显示。
