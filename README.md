@@ -19,10 +19,19 @@
 数据文件 js/battle-data.js 由配套工具 **[sanmou-viewer](https://github.com/laojingwei/sanmou-viewer)** 生成：
 
 1. 打开 sanmou-viewer（本地服务），顶栏切到「战报数据」
-2. 选「合并全部来源」→ 点「导出数据文件」，得到 attle-data_xxx.js
+2. 选「合并全部来源」→ 点「导出数据文件」，得到 battle-data_xxx.js
 3. 把它重命名/复制为本项目的 js/battle-data.js
-4. 刷新页面，数据自动载入并缓存（IndexedDB，下次秒开）
+4. 跑 `node tools/split-battle-data.mjs` 分片（原因见下）
+5. 刷新页面，数据自动载入并缓存（IndexedDB，下次秒开）
 
+> **为什么要分片**：Cloudflare Pages（alliance-counter.pages.dev）限制单个资源文件最大
+> **25 MiB**，而完整数据文件约 27 MiB，会让整个部署构建失败
+> （`Error: Pages only supports files up to 25 MiB in size`）。
+> 拆分后得到 `js/battle-data.1.js` … `battle-data.N.js`（每片默认 ≤ 14 MiB）和一个只有
+> 几行的装载器 `js/battle-data.js`，由装载器合并回 `window.AC.battleData`——页面其余
+> 代码只认这个变量，因此**没有任何改动**。只用本地 / GitHub Pages 时也可以不分片，
+> 直接把完整文件放进 `js/` 同样可用。
+>
 > **脱敏**：如果要把数据连同仓库一起分发（如 GitHub Pages），
 > 在 sanmou-viewer 导出时勾选「脱敏」，玩家名 / 同盟名会替换成一对一假名，
 > 分析结论不变但无法反推真实名称。
@@ -167,7 +176,7 @@ zip 内是一层目录 `alliance-counter-v<版本号>/`，结构与 GitHub 下�
 | **拖拽**（最省事） | 把 zip 直接拖到 `update-from-zip.cmd`（Mac 是 `.command`）上松手 |
 | **双击** | 把 zip 放到项目根目录（或 `dist/`），双击 `update-from-zip.cmd` |
 
-脚本会：解压 → 认出包内版本并和当前版本对比 → 备份 → 覆盖（排除 `.git`，你本地的 `js/battle-data.js` 也会保留）→ 提示刷新页面。
+脚本会：解压 → 认出包内版本并和当前版本对比 → 备份 → 覆盖（只排除 `.git`）→ 提示刷新页面。
 
 > **注意**：脚本只认**含 `index.html` 的 zip**，如果拖进去的不是本项目的包，会直接拒绝并告诉你原因。
 > 更新完成后，用过的那几个文件（zip、备份目录）可以手动删掉。
@@ -194,7 +203,7 @@ zip 内是一层目录 `alliance-counter-v<版本号>/`，结构与 GitHub 下�
 | 措施 | 说明 |
 | --- | --- |
 | **整目录备份** | 更新前复制到旁边的 `<目录名>-backup-<时间>`，出问题直接还原 |
-| **保留 `js/battle-data.js`** | 你本地的战报数据文件不会被覆盖 |
+| **内置数据随包更新** | 包内自带脱敏战报数据（分片），覆盖后开箱即用；你自己拖入/上传的数据存在浏览器里，不受影响 |
 | **保留仓库地址配置** | 覆盖后自动把 `data-repo` 写回 `index.html` |
 
 **首次使用前**：确认 `index.html` 里的 `data-repo` 是你自己的仓库地址（不是 `YOUR-NAME` 占位符），
@@ -548,8 +557,10 @@ node tools/bump-version.mjs 202610122200a
 脱敏在 **sanmou-viewer 导出时完成**（勾选「脱敏」选项）：玩家名替换为 `玩家0001`…
 同盟名替换为 `同盟001`…，同一原名永远对应同一假名，统计结果不变但无法反推真实名称。
 
-要把数据随仓库分发（如 GitHub Pages）时务必使用脱敏版。项目 `.gitignore` 默认忽略
-`js/battle-data.js`，防止未脱敏的数据被误提交。
+要把数据随仓库分发（如 GitHub Pages / Cloudflare Pages）时务必使用脱敏版。
+本项目已把**脱敏后**的数据连同仓库一起分发（`js/battle-data.1.js`、`js/battle-data.2.js`
+与装载器 `js/battle-data.js`），这样部署出来开箱就有数据；`.gitignore` 里保留了
+「不进仓库」的注释行，若改成不分发，取消注释并同步本节说明即可。
 
 ---
 
@@ -561,7 +572,9 @@ alliance-counter/
 ├─ start-server.cmd       备选本地服务（file:// 存储受限时用）
 ├─ css/style.css          深色主题样式
 ├─ js/
-│  ├─ battle-data.js      ★ 战报数据（sanmou-viewer 导出，git 默认忽略）
+│  ├─ battle-data.js      战报数据装载器（合并下面的分片，勿手改）
+│  ├─ battle-data.1.js    ★ 战报数据分片 1（viewer 导出后由 split-battle-data.mjs 拆分）
+│  ├─ battle-data.2.js    ★ 战报数据分片 2
 │  ├─ sanmou-source.js    数据装载：battleData → 内部 battle 结构
 │  ├─ model.js            阵容标准化、父战报串链、多段合并
 │  ├─ store.js            IndexedDB 缓存
@@ -588,9 +601,13 @@ node tools/audit-player.mjs
 
 # 版本号生成（改 version.json 后运行）
 node tools/bump-version.mjs
+
+# 战报数据分片（viewer 导出完整文件后运行；Cloudflare Pages 单文件上限 25 MiB）
+node tools/split-battle-data.mjs
 ```
 
-测试数据说明：`tools/` 下的测试默认读取 `js/battle-data.js` 做真实数据回归，
+测试数据说明：`tools/` 下的测试默认读取 `js/battle-data.js` 做真实数据回归
+（分片时会自动按 `battle-data.1.js` → `battle-data.2.js` → 装载器的顺序加载）；
 没有该文件时合成数据部分照常运行。
 
 ---

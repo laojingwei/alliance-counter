@@ -2,7 +2,7 @@
    改完 version.json 后跑 `node tools/bump-version.mjs` 重新生成。 */
 window.AC = window.AC || {};
 window.AC.VERSION = {
-  "version": "202610140407s",
+  "version": "202610140505s",
   "releasedAt": "2026-10-13",
-  "name": "筛选变动列表回顶 + 战报浮层翻页回顶"
+  "name": "修复 Cloudflare Pages 部署：战报数据分片（单文件 25 MiB 上限）"
 };

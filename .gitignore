@@ -39,5 +39,8 @@ dist/
 
 
 # ---- Sanmou 战报数据（sanmou-viewer 导出）----
-# 含真实玩家/同盟名，默认不进仓库；要内置到 Pages 就取消下面这行注释
+# 已脱敏（玩家→玩家0001…、同盟→同盟001…），入库以便 Pages 开箱可用；
+# 数据按 25 MiB 上限分片（Cloudflare Pages 单文件上限），由 tools/split-battle-data.mjs 生成。
+# 要改成「不进仓库」就取消下面两行注释，并同步 README 里的数据源说明
 # js/battle-data.js
+# js/battle-data.*.js

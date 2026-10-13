@@ -263,7 +263,15 @@ const csv = process.argv[2] || 'js/battle-data.js';
     console.log('\n数据文件不存在，跳过真实数据回归：' + file);
   } else {
     console.log('\n=== 4. 真实样本回归：' + path.basename(file) + ' ===');
-    vm.runInContext(fs.readFileSync(file, 'utf8'), sandbox, { filename: file });
+    // 数据可能被拆成多片（Cloudflare Pages 单文件上限 25 MiB，见 tools/split-battle-data.mjs）：
+    // 同目录下若有 battle-data.N.js，就按数字序依次执行，最后执行传入的装载器文件。
+    const dir = path.dirname(file);
+    const partFiles = fs.readdirSync(dir)
+      .filter((f) => /^battle-data\.\d+\.js$/.test(f))
+      .sort((a, b) => Number(a.match(/\.(\d+)\./)[1]) - Number(b.match(/\.(\d+)\./)[1]))
+      .map((f) => path.join(dir, f));
+    const runFiles = partFiles.length ? partFiles.concat([file]) : [file];
+    runFiles.forEach((f) => vm.runInContext(fs.readFileSync(f, 'utf8'), sandbox, { filename: f }));
     const battles = AC.sanmou.toBattles();
     const res = AC.analyzer.analyze(battles, {
       dimension: 'comp', minPair: 2, minAppear: 3, minLevel: 40,

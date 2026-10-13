@@ -1,9 +1,11 @@
 {
-  "version": "202610140407s",
+  "version": "202610140505s",
   "releasedAt": "2026-10-13",
-  "name": "筛选变动列表回顶 + 战报浮层翻页回顶",
+  "name": "修复 Cloudflare Pages 部署：战报数据分片（单文件 25 MiB 上限）",
   "notes": [
-    "玩家分析：筛选条件变动后，成员列表滚动回顶部（此前停在原位置，结果集已换但视口还在深处）",
-    "战报浮层：上一页 / 下一页切换后，内容区滚动回顶部（此前翻页后停留在上一页的滚动深度）"
+    "Cloudflare Pages 限制单个资源最大 25 MiB，27 MiB 的 js/battle-data.js 让线上部署一直构建失败（Error: Pages only supports files up to 25 MiB in size），pages.dev 因此停留在旧版本",
+    "数据拆成 js/battle-data.1.js（14.00 MiB）与 js/battle-data.2.js（12.86 MiB），由 js/battle-data.js 装载器合并回 window.AC.battleData——其余代码零改动",
+    "任一分片加载失败或片数不符时不装配数据，宁可提示缺数据，也不让页面拿着半份数据算出结论",
+    "新增 tools/split-battle-data.mjs：viewer 导出完整文件后一键重新分片；tools/test-strength.mjs 同步支持分片加载"
   ]
 }
