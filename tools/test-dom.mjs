@@ -135,11 +135,12 @@ const PSEUDO_A = /^同盟(\d+|[A-Z]\d*|[0-9A-F]{5})$/;
     '| 与数据文件一致:',
     counts.total === (w.AC.battleData ? w.AC.battleData.records.length : -1) ? 'PASS' : 'FAIL');
 
-  // 统计口径：child 不计入（analyze 的 totalInput 应为合并后的 block 数）
+  // 统计口径：合并后每条都是一次独立交战 —— 只有「打平后接着打」的段并进同一场战斗，
+  // 其余（含父战报管不到的 child）各自计入，所以分母落在 block 数与原始段数之间
   const st = w.AC.app.state.result.stats;
-  console.log('统计口径: totalInput', st.totalInput, '<= block', counts.block,
-    '| child 排除', st.childExcluded,
-    ':', st.totalInput <= counts.block && st.childExcluded > 0 ? 'PASS' : 'FAIL');
+  console.log('统计口径: totalInput', st.totalInput, '（block', counts.block, '/ 原始', counts.total, '）',
+    '| 合并掉', st.chainedMerged, '条链',
+    ':', st.totalInput > counts.block && st.totalInput < counts.total ? 'PASS' : 'FAIL');
 
   // 脱敏校验：数据里的玩家/同盟名应为假名（若数据是脱敏版）
   const anon = (w.AC.battleData.stats || {}).anonymized_players;
@@ -640,7 +641,9 @@ console.log('\n=== 玩家分析 ===');
         comp: { key: hit.key, display: hit.key, troopSig: '' }
       });
       const m = w.document.querySelector('.bl-mask');
-      const cards = m ? Array.prototype.slice.call(m.querySelectorAll('.bl2-card')) : [];
+      /* 只取主列表里的卡片：折叠盒里的平局续战段不算「场」 */
+      const cards = m ? Array.prototype.slice.call(m.querySelectorAll('.bl2-card'))
+        .filter(function (c) { return !c.closest('.bl2-chain-more'); }) : [];
       const seqs = cards.map((c) => {
         const t = (c.querySelector('.bl2-seq') || {}).textContent || '';
         const mm = t.match(/第 (\d+) 场/);
@@ -650,17 +653,23 @@ console.log('\n=== 玩家分析 ===');
         const t = (c.querySelector('.bl2-time') || {}).textContent || '';
         return Date.parse(t.replace(/\//g, '-').replace(' ', 'T'));
       });
-      // ① 每场一张卡：卡片数 == 该玩家该阵容的场次数（本页范围内），不再折叠隐藏
-      const noFold = m ? m.querySelectorAll('.bl2-chain').length === 0 : false;
-      console.log('战报每场一张卡（不折叠隐藏）:', noFold ? 'PASS' : 'FAIL',
-        '| 卡片', cards.length, '| 该玩家场次', hit.segs.length);
+      /* ① 一场完整战斗只占一张卡：同场的平局续战段收进折叠盒、默认收起
+            （判定为一场的就不要单独铺开成多场，用专门盒子装起来） */
+      const boxes = m ? Array.prototype.slice.call(m.querySelectorAll('.bl2-chain')) : [];
+      const foldedOk = boxes.every(function (c) {
+        const more = c.querySelector('.bl2-chain-more');
+        const btn = c.querySelector('.bl2-chain-toggle');
+        return !!more && more.hidden && !!btn;
+      });
+      console.log('战报：一场一张卡 + 平局段收进折盒（默认收起）:', foldedOk ? 'PASS' : 'FAIL',
+        '| 主卡片', cards.length, '| 折盒', boxes.length, '| 该玩家记录', hit.segs.length);
       // ② 场号按发生顺序：列表从新到旧，页内场号连续递减（分页后末位不再是 1）
       const desc = times.every((v, i) => i === 0 || times[i - 1] >= v);
       const seqOrdered = seqs.length > 1 && seqs.every((s, i) => i === 0 || seqs[i - 1] === s + 1);
       console.log('战报列表从新到旧:', desc ? 'PASS' : 'FAIL',
         '| 页内场号连续递减（第 1 场 = 最早，全量编号）:', seqOrdered ? 'PASS' : 'FAIL',
         '| 场号', seqs.join(','));
-      if (!noFold || !desc || !seqOrdered) process.exitCode = 1;
+      if (!foldedOk || !desc || !seqOrdered) process.exitCode = 1;
       const cb2 = m && m.querySelector('.bl-close');
       if (cb2) cb2.click();
     } else {
@@ -680,19 +689,20 @@ console.log('\n=== 玩家分析 ===');
     const chained = rr.battles.filter((b) => b.chainSegs > 1);
     const fieldsOk = chained.every((b) => b.atk.origin != null && b.atk.remain != null &&
       b.result && typeof b.round === 'number');
-    // 口径断言：child 已被排除（totalInput 应明显小于原始段数）
+    // 口径断言：每条都是一次独立交战 —— 只有前一段打平（且兵力接得上）的续战才合并，
+    // 其余 child（父战报关系只说明同一波团战）各自计入，所以分母大于 block 数
     const counts = ACx.app.store.counts();
-    const orphanChild = s.childExcluded;
+    const scopeOk = s.totalInput > counts.block && s.totalInput < rawN;
     const drawOn = rr.battles.filter((b) => b.result === 'draw').length;
     console.log('续战合并: ' + s.chainedMerged + ' 次 | 统计分母 ' + s.totalInput + '（原始 ' + rawN + ' 段）',
       mergedOk ? 'PASS' : 'FAIL');
     console.log('状态栏提示合并次数:', footOk ? 'PASS' : 'FAIL');
     console.log('合并体字段完整（开战/剩余兵力、胜负、回合）:', fieldsOk ? 'PASS' : 'FAIL',
       '| 含续战的对局', chained.length, '场');
-    console.log('统计口径：totalInput == block 数（child 不重复计）:',
-      s.totalInput === counts.block ? 'PASS' : 'FAIL ' + s.totalInput + ' vs ' + counts.block,
-      '| 孤儿 child 排除', orphanChild, '条',
-      '| 统计内平局', drawOn, '场（child 的中间平局不再计入）');
+    console.log('统计口径：各自一场（除平局续战）:',
+      scopeOk ? 'PASS' : 'FAIL ' + s.totalInput + ' vs block ' + counts.block + ' / 原始 ' + rawN,
+      '| 合并掉', rawN - s.totalInput, '段',
+      '| 统计内平局', drawOn, '场');
   }
 }
 

@@ -719,7 +719,7 @@ window.AC = window.AC || {};
     const rows = [
       ['战报记录', counts.total + ' 场'],
       ['完整交战', counts.block + ' 场'],
-      ['续战段', counts.child + ' 场（不计入统计）']
+      ['分战报（续战段）', counts.child + ' 场']
     ];
     if (meta.players) rows.push(['玩家', meta.players + ' 人']);
     if (meta.heroes) rows.push(['武将记录', U.fmtNum ? U.fmtNum(meta.heroes) : meta.heroes + ' 条']);
@@ -750,7 +750,8 @@ window.AC = window.AC || {};
     if (counts.child > 0) {
       box.appendChild(U.el('p', {
         class: 'hint',
-        text: '续战段（child）是同一场交战的中间过程，只用于明细展示与连赢判定，不重复计入统计。'
+        text: '分战报（child）的父战报关系只说明「同一波团战」。只有打平之后接着打的那一段'
+            + '（同一玩家、同一阵容、兵力接得上）才并进同一场战斗，其余各自算一场真实交战。'
       }));
     }
   }
@@ -772,7 +773,8 @@ window.AC = window.AC || {};
     // 内战分析不跟着主分析的过滤走，直接吃原始战报
     if (mirrorView) mirrorView.render(store.battles);
     if (gearView) gearView.render(store.battles);
-    if (playerView) playerView.render(r, store.battles);
+    /* 传合并后的列表（每场战斗自带 segs）：战报浮层靠它把同场的平局续战段收进折盒 */
+    if (playerView) playerView.render(r, r.allBattles || store.battles);
     table.setData(r.battles);
     updateStats(r, withAnim);
 

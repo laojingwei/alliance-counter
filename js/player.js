@@ -140,6 +140,10 @@ window.AC = window.AC || {};
        供所有玩家共享，用来显示「有几场被筛选条件排除」。
        （旧实现是每个玩家各扫一遍全量数据，O(P×B)，玩家一多主线程会卡死。） */
     const fullCount = new Map();
+    /* 「另 N 段平局续战已并入」：一场战斗里这位玩家这套阵容参与了 k 段，就有 k-1 段被折进
+       同一张卡。注意**不能数「所有 child 记录」** —— 没被合并的 child 本身就是独立一场、
+       已经计入统计，那样数出来的数字会和战报浮层里的段数对不上（实测 15 对 1）。 */
+    const childCount = new Map();
     /* 全量口径的「玩家|阵容 -> 对手分布」：抓克制判的是**行为**（他盯着谁打），
        不该被「只统计兵力接近 / 红度对等」这类统计筛选砍掉场次——否则真人专挑 8 场，
        筛选后只剩 3 场就判不出来了。展示用的场次/胜率仍走筛选后口径。 */
@@ -147,10 +151,33 @@ window.AC = window.AC || {};
     /* 每套队伍的全量战斗序列（按时间正序用）：用来找「连续 N 场都在打同一套」的一波针对 */
     const fullSeq = new Map();
     if (useAll) {
+      /* 「被折进同一张卡的段」= 这场战斗里他参与的段数 - 1（与战报浮层同口径）。
+         按**玩家**归属，key 取他在这场里第一次出现的那个 —— 同场续战里某个武将打光后
+         阵容串会变短、key 跟着变，按 key 精确匹配会漏掉后面的段。 */
+      fullSrc.forEach(function (b) {
+        if (!b.segs || b.segs.length < 2) return;
+        const seen = new Map();          // 玩家 -> { key, n }
+        b.segs.forEach(function (sg) {
+          [sg.atk, sg.def].forEach(function (s) {
+            if (!s || !s.player) return;
+            let rec = seen.get(s.player);
+            if (!rec) { rec = { key: s.key, n: 0 }; seen.set(s.player, rec); }
+            rec.n++;
+          });
+        });
+        seen.forEach(function (rec, player) {
+          if (rec.n < 2) return;
+          let cm = childCount.get(player);
+          if (!cm) { cm = new Map(); childCount.set(player, cm); }
+          cm.set(rec.key, (cm.get(rec.key) || 0) + (rec.n - 1));
+        });
+      });
+
       fullSrc.forEach(function (b) {
         [['atk', b.atk], ['def', b.def]].forEach(function (pair) {
           const sd = pair[1];
           if (!sd || !sd.player) return;
+          // fullSrc 已经是「合并后的一场一场」，所以这里每条都算一场
           let m = fullCount.get(sd.player);
           if (!m) { m = new Map(); fullCount.set(sd.player, m); }
           m.set(sd.key, (m.get(sd.key) || 0) + 1);
@@ -292,6 +319,7 @@ window.AC = window.AC || {};
     const players = Array.from(map.values()).map(function (p) {
       // 该玩家在全量数据里的场次（不受当前筛选影响），比 n 大说明有对局被排除
       const fm = useAll ? fullCount.get(p.name) : null;
+      const cm = useAll ? childCount.get(p.name) : null;
 
       const compList = Array.from(p.compMap.values())
         .sort(function (a, b) { return b.n - a.n; })
@@ -322,8 +350,10 @@ window.AC = window.AC || {};
             draw: c.draws,
             rate: c.n ? (c.wins + c.draws * 0.5) / c.n : 0.5,
             heroes: flushHeroAgg(c.heroAgg),
-            // 该阵容在全量数据里的场次；比 n 大说明有对局被筛选条件排除
+            // 全量口径下该阵容的 block 场次；比 n 大说明有对局被统计条件排除
             fullN: (fm && fm.has(c.key)) ? fm.get(c.key) : c.n,
+            // 同一阵容的同场续战（child）段数：已并入所属那一场，不算「被排除」
+            childN: (cm && cm.has(c.key)) ? cm.get(c.key) : 0,
             // 对手分布（用于展示「打过的对手有多散」）
             foes: { total: foeTotal, kinds: c.foeMap.size, topKey: topKey, topN: topN, topShare: topShare, topDisplay: topDisplay },
             /* 手操抓克制：样本够 + 明显盯着某一种队伍打 */
@@ -474,19 +504,52 @@ window.AC = window.AC || {};
      对战多时按页切换；被当前筛选条件排除的场次同样列出，并单独打标。 */
   const BATT_PER_PAGE = 10;
 
-  /** 从全量数据现场收集某玩家某套阵容的对战（含被筛选条件排除的场次） */
+  /** 从全量数据现场收集某玩家某套阵容的「战斗」（含同场的平局续战段） */
   function collectBattles(allBattles, kept, playerName, comp) {
     const out = [];
     (allBattles || []).forEach(function (b) {
-      [['atk', b.atk], ['def', b.def]].forEach(function (pair) {
-        const role = pair[0], side = pair[1];
-        if (!side || side.player !== playerName || side.key !== comp.key) return;
-        out.push({
-          id: b.id, time: b.time, ts: b.ts, place: b.place, round: b.round,
-          result: b.result, role: role,
-          me: side, foe: role === 'atk' ? b.def : b.atk,
-          filtered: !kept.has(b.id)      // 该场是否被当前筛选条件排除
+      /* 合并体自带这场战斗的全部原始段（model.mergeChain 写入的 segs）；
+         单段链没有 segs，就是它自己。 */
+      const segs = (b.segs && b.segs.length) ? b.segs : [b];
+      /* 只要这一场里有一段是他用这套阵容打的，整场就归他 ——
+         同场续战里某个武将打光后阵容字符串会变短，不能要求每段都一致。 */
+      let matched = false;
+      segs.forEach(function (sg) {
+        [sg.atk, sg.def].forEach(function (s) {
+          if (s && s.player === playerName && s.key === comp.key) matched = true;
         });
+      });
+      if (!matched) return;
+
+      const mine = [];
+      segs.forEach(function (sg) {
+        [['atk', sg.atk], ['def', sg.def]].forEach(function (pair) {
+          const role = pair[0], side = pair[1];
+          if (!side || side.player !== playerName) return;
+          mine.push({
+            id: sg.id, time: sg.time, ts: sg.ts, place: sg.place, round: sg.round,
+            result: sg.result, role: role,
+            me: side, foe: role === 'atk' ? sg.def : sg.atk
+          });
+        });
+      });
+      if (!mine.length) return;
+
+      /* 末段（分出胜负的那一段）就是这一场的「结果」；前面的平局段收进 segs，
+         由卡片上的按钮展开 —— 不再单独铺开成一堆「场」。 */
+      mine.sort(function (a, b) { return (a.ts || 0) - (b.ts || 0); });
+      const last = mine[mine.length - 1];
+      const inKept = kept.has(b.id);
+      out.push({
+        id: b.id, time: last.time, ts: last.ts, place: last.place, round: last.round,
+        result: last.result, role: last.role,
+        me: last.me, foe: last.foe,
+        isChild: b.recordType === 'child',
+        /* 未计入统计的原因只剩一种要单独标：真的没通过当前的样本筛选条件。
+           （同场续战段现在收在 segs 里，不再作为「被排除」的另一类条目出现。） */
+        filtered: !inKept,
+        filteredBy: inKept ? '' : (b.recordType === 'child' ? 'child' : 'sample'),
+        segs: mine.slice(0, -1)
       });
     });
     return out;
@@ -584,10 +647,12 @@ window.AC = window.AC || {};
         return (x.ts || 0) >= (o.range.from || 0) && (x.ts || 0) <= (o.range.to || Infinity);
       });
     }
-    const hidden = list.filter(function (x) { return x.filtered; }).length;
-    /* 与游戏内战报一致：**每一场一张卡**（打平续战也各占一场，不再折叠隐藏），
+    /* 平局续战段已经收进各场战斗的 segs 里（默认折叠），这里只统计数量用于说明 */
+    const segCnt = list.reduce(function (s, x) { return s + (x.segs ? x.segs.length : 0); }, 0);
+    const hidden = list.filter(function (x) { return x.filteredBy === 'sample'; }).length;
+    /* 与游戏内战报一致：**一场完整战斗一张卡**，同场的平局段收在卡片里可展开。
        场号按**发生顺序**编（第 1 场 = 最早那场），列表从新到旧排列（最新的在最上面）。
-       之前是折叠 + 按显示顺序编号，于是「第 1 场」反而是最新的那场，和游戏对不上。 */
+       注意：一场战斗只占一个场号 —— 打平续战段不再各自占一场。 */
     const asc = list.slice().sort(function (a, b) { return (a.ts || 0) - (b.ts || 0); });
     asc.forEach(function (x, i) { x.__seqNo = i + 1; });
     // 倒序显示；同一秒的两场按场号倒排，保证「新的在上」不会因稳定排序而颠倒
@@ -672,7 +737,7 @@ window.AC = window.AC || {};
       const resultText = isDraw ? '平' : (meWin ? '胜' : '败');
       const card = U.el('div', {
         class: 'bl2-card ' + (meWin ? 'is-win' : (isDraw ? 'is-draw' : 'is-loss')) +
-          (x.filtered ? ' is-filtered' : '')
+          (x.filtered ? ' is-filtered' : '') + (x.isChild ? ' is-child' : '')
       });
 
       // 顶部条：攻守 + 第几场 + 地点 + 时间
@@ -688,10 +753,14 @@ window.AC = window.AC || {};
         (x.me && x.me.wuxun) ? U.el('span', {
           class: 'bl2-merit', text: '武勋 ' + U.fmtInt(x.me.wuxun)
         }) : null,
-        x.filtered ? U.el('span', {
+        x.filteredBy === 'child' ? U.el('span', {
+          class: 'bl-child-tag', text: '同场续战',
+          title: '这是同一场交战的续战段（游戏用「父战报」把它归属到那一场），已并入那一场一起统计。'
+               + '它不是被筛选条件排除的 —— 放宽左侧任何条件都不会让它单独计数'
+        }) : (x.filtered ? U.el('span', {
           class: 'bl-filtered-tag', text: '被筛选排除',
           title: '这场没通过左侧的样本筛选条件，不计入统计，但仍属于他的对战记录'
-        }) : null,
+        }) : null),
         U.el('span', {
           class: 'bl2-time',
           text: String(x.time || '').replace('T', ' ').replace(/-/g, '/')
@@ -715,6 +784,57 @@ window.AC = window.AC || {};
       return card;
     }
 
+    /**
+     * 一场完整战斗 = 结果卡（末段）+ 折叠起来的平局续战段。
+     * 默认只显示结果那一段，点按钮才展开前面的平局段；
+     * 展开区用专门的盒子装，和「独立的一场」在视觉上区分开。
+     */
+    function renderChain(x, seqText) {
+      const segs = x.segs || [];
+      if (!segs.length) return renderCard(x, seqText);
+      const total = segs.length + 1;          // 这一场一共几段
+      /* 段号按**时间顺序**编：先打的那几段是平局（第 1、2…段），最后一段才分出胜负。
+         所以主卡是「第 total 段」，展开区里是它前面的第 1…段 —— 反过来标会让人以为
+         平局是「续战」而结果才是第一场。 */
+      const card = renderCard(x, seqText + ' · 第 ' + total + ' 段');
+
+      const wrap = U.el('div', { class: 'bl2-chain' });
+      const more = U.el('div', { class: 'bl2-chain-more' });
+      more.hidden = true;
+      /* 展开区里按时间**倒序**显示（与整个列表「新的在上」保持一致），
+         但段号仍是时间顺序（第 1 段 = 最早那一段）。 */
+      segs.map(function (sg, i) { return { sg: sg, no: i + 1 }; })
+        .reverse()
+        .forEach(function (item) {
+          const sc = renderCard(item.sg, '第 ' + item.no + ' 段');
+          sc.classList.add('is-seg');
+          more.appendChild(sc);
+        });
+
+      let open = false;
+      const btn = U.el('button', {
+        class: 'bl2-chain-toggle',
+        text: '展开前面 ' + segs.length + ' 段平局',
+        onclick: function (e) {
+          e.stopPropagation();
+          open = !open;
+          more.hidden = !open;
+          btn.textContent = open ? '收起平局段' : ('展开前面 ' + segs.length + ' 段平局');
+        }
+      });
+      wrap.appendChild(U.el('div', { class: 'bl2-chain-bar' }, [
+        U.el('i', { class: 'bl2-chain-tag', text: '完整一场' }),
+        U.el('span', {
+          class: 'bl2-chain-note',
+          text: '共 ' + (segs.length + 1) + ' 段（前面 ' + segs.length + ' 段打平后接着打），胜负以最后一段为准'
+        }),
+        btn
+      ]));
+      wrap.appendChild(card);
+      wrap.appendChild(more);
+      return wrap;
+    }
+
     function renderPage() {
       body.innerHTML = '';
       const slice = shown.slice(page * BATT_PER_PAGE, (page + 1) * BATT_PER_PAGE);
@@ -722,9 +842,10 @@ window.AC = window.AC || {};
         body.appendChild(U.el('div', { class: 'hint', text: '这套阵容没有可展示的对战记录。' }));
         return;
       }
-      // 每场一张卡：卡上的场号用「发生顺序」（第 1 场 = 最早），与游戏内一致
+      // 一场完整战斗一张卡，场号用「发生顺序」（第 1 场 = 最早），与游戏内一致；
+      // 同场的平局续战段收在卡片里，点按钮才展开
       slice.forEach(function (x) {
-        body.appendChild(renderCard(x, '第 ' + (x.__seqNo || 1) + ' 场'));
+        body.appendChild(renderChain(x, '第 ' + (x.__seqNo || 1) + ' 场'));
       });
     }
 
@@ -736,8 +857,11 @@ window.AC = window.AC || {};
       }));
       pager.appendChild(U.el('span', {
         class: 'bl-page',
-        text: (page + 1) + ' / ' + totalPages + '  （共 ' + list.length + ' 场' +
-          (hidden ? '，其中 ' + hidden + ' 场未通过当前筛选、不计入统计' : '') + '）'
+        /* 把账目写清楚：计入统计的场次 + 折叠起来的平局续战段 + 未过筛选的场次 */
+        text: (page + 1) + ' / ' + totalPages + '  （共 ' + list.length + ' 场'
+          + '：计入统计 ' + Math.max(0, list.length - hidden) + ' 场'
+          + (segCnt ? ' · 另有 ' + segCnt + ' 段平局续战已折进所属那场' : '')
+          + (hidden ? ' · 未过筛选 ' + hidden + ' 场' : '') + '）'
       }));
       pager.appendChild(U.el('button', {
         class: 'bl-btn', text: '下一页', disabled: page >= totalPages - 1 ? 'disabled' : null,
@@ -807,6 +931,14 @@ window.AC = window.AC || {};
         c.n < 5 ? U.el('span', { class: 'pc-weak', text: '样本少' }) : null,
         (c.fullN && c.fullN > c.n)
           ? U.el('span', { class: 'pc-more', title: '有对局被筛选条件排除，关闭「红度对等」等条件后可见', text: '另 ' + (c.fullN - c.n) + ' 场被筛选排除' })
+          : null,
+        // 同场续战：已并入所属的那一场，与「被筛选排除」不是一回事
+        (c.childN && c.childN > 0)
+          ? U.el('span', {
+            class: 'pc-child',
+            title: '这些是同一场交战的续战段（游戏用「父战报」归属），已并进所属那一场一起统计；不是被筛选条件排除的',
+            text: '另 ' + c.childN + ' 段续战已并入'
+          })
           : null,
         U.el('button', {
           class: 'pc-log', text: '战报',
@@ -1139,7 +1271,12 @@ window.AC = window.AC || {};
         let hidden = 0;
         p.compList.forEach(function (c) { hidden += Math.max(0, (c.fullN || c.n) - c.n); });
         return hidden + ' 场';
-      })(), '放宽左侧筛选条件可看到')
+      })(), '放宽左侧筛选条件可看到'),
+      metric('同场续战', (function () {
+        let child = 0;
+        p.compList.forEach(function (c) { child += (c.childN || 0); });
+        return child + ' 段';
+      })(), '同一场交战的续战段，已并入所属那一场统计')
     ]));
 
     /* ---- 他的作战习惯（总结成「怎么应付他」） ---- */

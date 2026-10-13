@@ -1096,6 +1096,7 @@ details.fold > .fold-summary + * { margin-top: 0; }
 .pc-wl { color: #8fa3c4; font-variant-numeric: tabular-nums; }
 /* 被筛选排除的场次提示 */
 .pc-more { color: #e5a86b; font-size: 11px; }
+.pc-child { color: #8ea8c8; font-size: 11px; }
 /* 场次太少、胜率不可信 */
 .ai-weak, .pc-weak { color: #e5a86b; font-size: 10.5px; }
 /* 玩家分析：单点克制的一行（阵容 / 数据来源 / 胜率） */
@@ -1277,12 +1278,21 @@ details.fold > .fold-summary + * { margin-top: 0; }
   border-radius: 5px; padding: 1px 10px; font-size: 11px; cursor: pointer; white-space: nowrap; }
 .bl2-chain-toggle:hover { border-color: #3b82f6; color: #fff; }
 .bl2-chain > .bl2-card { border-radius: 0 0 10px 10px; border-top: none; }
-.bl2-chain-more { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
+/* 展开区：一个专门的盒子，和「独立的一场」在视觉上区分开 */
+.bl2-chain-more { display: flex; flex-direction: column; gap: 12px; margin-top: 8px;
+  padding: 10px 12px 12px; border-left: 3px solid rgba(142, 168, 200, .55);
+  background: rgba(142, 168, 200, .06); border-radius: 0 0 10px 10px; }
 .bl2-chain-more[hidden] { display: none; }
-/* 被当前筛选条件排除的场次：照样列出，但弱化并打标 */
+/* 盒子里的平局续战段：比「独立的一场」弱一档，一眼能看出是同一场的内部段 */
+.bl2-card.is-seg { opacity: .9; }
+/* 未计入统计的场次：照样列出，但弱化并打标（两种原因用不同颜色区分） */
 .bl2-card.is-filtered { opacity: .6; }
 .bl-filtered-tag { font-size: 10.5px; color: #e5a86b;
   border: 1px solid rgba(229, 168, 107, .4); border-radius: 4px; padding: 0 6px; }
+/* 同场续战：不是被筛选条件排除，只是被并进所属那一场，弱化轻一些 */
+.bl2-card.is-child { opacity: .78; }
+.bl-child-tag { font-size: 10.5px; color: #8ea8c8;
+  border: 1px solid rgba(142, 168, 200, .45); border-radius: 4px; padding: 0 6px; }
 /* 窄屏折行，避免武将卡被挤没 */
 @media (max-width: 720px) {
   .bl2-body { flex-wrap: wrap; justify-content: center; }

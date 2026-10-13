@@ -159,9 +159,9 @@ function markRuns(battles, opts) {
 
   const byUnit = new Map();      // 「玩家|阵容键」-> 该部队的交战记录
   battles.forEach(function (b) {
-    // 输入已按「一次交战一场」过滤（见 analyze 里的 statSrc），这里直接使用。
-    // 防御：万一上游传了未过滤的数据，child（同一场交战的续战段）跳过。
-    if (b.recordType === 'child') return;
+    // 输入已按「一次交战一场」处理（见 analyze 里的 statSrc）：合并体和
+    // 「兵力不衔接、各自独立」的段都会进来，所以不再按 recordType 过滤 ——
+    // 旧口径把所有 child 一律跳过，等于把近一半独立交战的连赢信息也一起丢了。
     ['atk', 'def'].forEach(function (role) {
       const side = b[role];
       if (!side || !side.player) return;
@@ -546,17 +546,20 @@ function strengthOf(node) {
        Sanmou 的战报结构（viewer 导出时已按 battleId 去重）：
          block —— 主战报（该次交战的最终结果）
          child —— 同一次交战内的续战段 / 团战分战报
-       处理分两步：
-         ① mergeChains：按「同一对玩家 + 同一地点 + 兵力衔接」把多段
-            （block 与其后续 child）合成一条 —— 伤亡/回合/武勋累计，胜负取末段。
-            实测 10,054 条 → 9,215 条（合并 658 条多段链）。
-         ② 过滤剩余 child：没被任何链认领的 child（来源不全或兵力对不上），
-            不作为独立交战计入统计。实测再排除 4,369 条 → 4,846 场。
+       合并只发生在「打平后接着打」的段之间（见 model.linkChains）：
+         ① 只有打平才会续战（实测 859 条平局里 844 条是中间段）；父战报关系
+            只说明「同一波团战」，按它整波合并会把大量独立交战吞掉。
+         ② 合并后列表里每一条都是一次独立交战：没并进链里的段本身就是
+            独立交战，一律计入统计（不再按 recordType 过滤 child）。
        明细展示（战报浮层）仍保留原始每段，通过 childIds 关联。
        --------------------------------------------------------------- */
     const mergedRes = M.mergeChains(battles);
     const src = mergedRes.list;
-    const statSrc = src.filter(function (b) { return b.recordType !== 'child'; });
+    /* 合并后列表里每一条都是一次独立交战：多段链已并成一条，没并进链里的
+       child 本身就是独立交战（父战报关系只说明同一波团战，实测 77% 的段
+       兵力并不衔接）。旧实现把所有 child 一律过滤，等于把 10,054 份战报里
+       近一半的真实交战直接丢掉，统计场次只有 5,169，胜率/连赢/回合数跟着失真。 */
+    const statSrc = src;
 
     /* 连赢段：按「同玩家 + 部队」还原一次出战，再取出其中连续胜利的段（详见 markRuns）。 */
     const runStats = markRuns(statSrc, opts);
@@ -1064,10 +1067,10 @@ function strengthOf(node) {
       .sort(function (a, b) { return b.n - a.n || b.rate - a.rate; });
 
     const stats = {
-      totalInput: statSrc.length,      // 参与统计的场次（默认只含 block）：与 totalKept 同口径
+      totalInput: statSrc.length,      // 参与统计的场次（= 合并后的独立交战数）：与 totalKept 同口径
       rawInput: mergedRes.rawSegs,     // 导入的原始段数
-      chainedMerged: mergedRes.merged, // 合并掉的续战链数
-      childExcluded: src.length - statSrc.length,  // 被排除的续战段数
+      chainedMerged: mergedRes.merged, // 真正合并掉的续战链数（父战报关系 + 兵力衔接都满足）
+      childExcluded: 0,                // 兼容旧字段：不再有「被整体排除的续战段」
       totalKept: kept.length,
       skipped: skipped,
       skippedMirror: skippedMirror,
