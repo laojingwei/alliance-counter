@@ -8,7 +8,7 @@
 #
 #  与联网更新一致的安全措施：
 #    · 更新前整目录备份到旁边的 <目录名>-backup-<时间>
-#    · 保留 samples/ 目录
+#    · （历史说明已废弃：samples/ 已移除）
 #    · 保留 index.html 里的 data-repo 配置
 # ============================================================
 
@@ -101,7 +101,7 @@ try {
   Say '✔ 备份完成（出问题可以从这里还原）' 'Green'
   Say ''
 
-  # ---------- 4. 覆盖（保留 samples 与 .git） ----------
+  # ---------- 4. 覆盖（排除 .git） ----------
   $keepRepo = ''
   $indexPath = Join-Path $root 'index.html'
   if (Test-Path $indexPath) {
@@ -111,7 +111,7 @@ try {
   }
 
   Say '正在覆盖文件 ...'
-  $null = robocopy $srcDir.FullName $root /E /XD samples .git /NFL /NDL /NJH /NJS /NP
+  $null = robocopy $srcDir.FullName $root /E /XD .git /NFL /NDL /NJH /NJS /NP
   if ($LASTEXITCODE -ge 8) { throw "robocopy 失败，退出码 $LASTEXITCODE" }
   Say '✔ 文件覆盖完成' 'Green'
   Say ''

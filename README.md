@@ -1,58 +1,64 @@
 # 同盟对战 · 阵容克制关系图
 
-把战报 CSV 拖进来，自动算出**哪些阵容克哪些阵容**，并用带流动动画的关系图和克制矩阵展示出来。
-多次导入的战报会**自动叠加**（按「战斗Key」去重），数据存在浏览器本地，越攒越准。
+读取 Sanmou 抓取的战报数据，自动算出**哪些阵容克哪些阵容**，并用带流动动画的关系图和克制矩阵展示。
+统计口径按「一次出战 = 1 场」处理（同一场交战的续战段不重复计数），结论直接可读。
 
 ---
+
+## 线上体验
+[跳转去体验-线路1](https://laojingwei.github.io/alliance-counter) (可能数据加载比较慢)
+[跳转去体验-线路2](https://alliance-counter.pages.dev) (推荐)
 
 ## 快速开始
 
 **零依赖：拿到这个文件夹的人不需要安装任何东西** —— 不用 Node.js、不用 Python、不用打包工具。
 整个文件夹可以复制到任意位置直接运行（所有引用都是相对路径）。
 
-**方式一（推荐）**：直接双击 `index.html`，用浏览器打开（Chrome / Edge / Firefox 均可）。
-点击左侧「载入示例表」即可看到完整效果；也可以把战报 CSV 拖到页面任意位置导入。
+### 数据从哪来？
 
-**方式二（备选）**：极少数浏览器会限制 `file://` 页面的本地存储（例如某些版本的 Safari）。
-遇到这种情况，双击 `start-server.cmd`，脚本会自动探测本机的 Node.js 或 Python 并开启
-`http://127.0.0.1:8123/`；一个都没有时，脚本会明确提示直接双击 `index.html` 即可。
+数据文件 js/battle-data.js 由配套工具 **[sanmou-viewer](https://github.com/laojingwei/sanmou-viewer)** 生成：
 
-> Node.js 只被 `tools/` 目录下的开发脚本使用（脱敏、测试、数据画像等），**与页面运行完全无关**，
-> 普通使用者可以忽略整个 `tools/` 目录。
-> 演示地址参数：`index.html?demo=1` 会自动载入内置示例表并跳过提示。
+1. 打开 sanmou-viewer（本地服务），顶栏切到「战报数据」
+2. 选「合并全部来源」→ 点「导出数据文件」，得到 attle-data_xxx.js
+3. 把它重命名/复制为本项目的 js/battle-data.js
+4. 刷新页面，数据自动载入并缓存（IndexedDB，下次秒开）
 
-> **内置示例数据已脱敏**：示例表与 `js/sample-data.js` 中的同盟名、玩家名均已替换为一对一假名
-> （同盟 → `同盟A/同盟B/…`，玩家 → `玩家01`…，同一原名永远对应同一假名），
-> 因此分析结论与真实数据完全一致，但无法反推真实名称。
-> 当前内置的是**武将级明细表**：1002 场战斗 / 5765 条武将记录 / 79 名武将 / 260 种技能。
-> 自己导入的真实战报表只存在本机浏览器里，不会上传到任何地方。
+> **脱敏**：如果要把数据连同仓库一起分发（如 GitHub Pages），
+> 在 sanmou-viewer 导出时勾选「脱敏」，玩家名 / 同盟名会替换成一对一假名，
+> 分析结论不变但无法反推真实名称。
+
+### 打开方式
+
+**方式一（推荐）**：直接双击 index.html，用浏览器打开（Chrome / Edge / Firefox 均可）。
+
+**方式二（备选）**：极少数浏览器会限制 ile:// 页面的本地存储（例如某些版本的 Safari）。
+遇到这种情况，双击 start-server.cmd，脚本会自动探测本机的 Node.js 或 Python 并开启
+\http://127.0.0.1:8123/\；一个都没有时，脚本会明确提示直接双击 \index.html\ 即可。
+
+> Node.js 只被 \	ools/\ 目录下的开发脚本使用（测试、审计等），**与页面运行完全无关**，
+> 普通使用者可以忽略整个 \	ools/\ 目录。
+>
+> 自己载入的战报数据只存在本机浏览器里，不会上传到任何地方。
 
 ---
 
-## 导入与叠加
+## 数据口径
 
-| 操作 | 说明 |
+| 概念 | 说明 |
 | --- | --- |
-| 拖拽文件到页面 | 支持一次拖多个 CSV |
-| 点击「导入战报表」 | 从文件选择器选一个或多个 |
-| 「载入示例表」 | 载入内置的一份样例数据 |
-| 「导出存档」 | 导出 JSON，换电脑 / 换浏览器时备份 |
-| 「恢复存档」 | 把 JSON 存档叠加回来（同样去重） |
+| **block（主战报）** | 一次完整交战的最终结果，是统计的基本单位 |
+| **child（续战段 / 团战分战报）** | 同一场交战内部的分段，**不计入统计**，只在明细里可见 |
+| **合并链** | block 与其名下 child 按父战报关系合并：伤亡/回合/武勋累计，胜负取时间最末段 |
 
-- **叠加而非覆盖**：新导入的记录会与已有记录合并，重复的战斗（同 `战斗Key`）自动跳过，不会重复计数。
-- **可回滚**：左侧「数据导入」区会列出每次导入的批次，点条目右侧的 `✕` 可以只移除那一批。
-- **支持两种表**：
-  1. **宽表**：一场战斗一行（约 29 列，含攻守双方的阵容 / 阵型 / 兵力）；
-  2. **武将级明细表**：游戏导出的明细数据（74 列左右，一场战斗拆成多行，每行一个武将）。
-     程序会自动识别并聚合成战斗记录，同时保留武将、技能、兵书、装备、战马、红度、觉醒等信息，
-     供「武将分析」使用。判断依据是表头里是否同时出现「武将序号 / 武将名 / 方 / 战斗编号」这类列。
-- **表头自动识别**：列名和列顺序可以不一样。程序先做别名匹配，再按关键词推断（`攻/atk/attacker`、`守/def/defender` × `阵容/team`、`阵型/formation`、`等级/level`…）。
-  已支持中英文列名、逗号 / 制表符 / 分号分隔、UTF-8 与 GB18030 编码（游戏导出的 GBK 表也能直接读）。
-- **本地存储**：数据保存在浏览器 `localStorage`（键名 `ac.battles.v2`）。清空浏览器数据会丢，重要数据请用「导出存档」备份。
+导入后侧边栏「数据源」面板会显示：总记录数、block / child 拆分、父战报匹配率、
+玩家数、时间范围与数据文件导出时间。数字对不上时先看这里的「父战报匹配率」。
 
-识别不到的列会在导入后提示，不影响已识别字段的使用。
+- **本地存储**：转换结果缓存在浏览器 IndexedDB（键名含版本号）。数据文件更新后点「重新载入」即可。
+- **重新载入**：侧边栏「↻ 重新载入」会重新从 \window.AC.battleData\ 转换一遍；顶栏按钮同效。
+- **清空数据**：只清浏览器缓存，数据文件本身不受影响，刷新后重新载入。
 
 ---
+
 
 ## 分析口径（这几条决定了结论是否可信）
 
@@ -161,7 +167,7 @@ zip 内是一层目录 `alliance-counter-v<版本号>/`，结构与 GitHub 下�
 | **拖拽**（最省事） | 把 zip 直接拖到 `update-from-zip.cmd`（Mac 是 `.command`）上松手 |
 | **双击** | 把 zip 放到项目根目录（或 `dist/`），双击 `update-from-zip.cmd` |
 
-脚本会：解压 → 认出包内版本并和当前版本对比 → 备份 → 覆盖（保留 `samples/` 和你的 `data-repo` 配置）→ 提示刷新页面。
+脚本会：解压 → 认出包内版本并和当前版本对比 → 备份 → 覆盖（排除 `.git`，你本地的 `js/battle-data.js` 也会保留）→ 提示刷新页面。
 
 > **注意**：脚本只认**含 `index.html` 的 zip**，如果拖进去的不是本项目的包，会直接拒绝并告诉你原因。
 > 更新完成后，用过的那几个文件（zip、备份目录）可以手动删掉。
@@ -188,7 +194,7 @@ zip 内是一层目录 `alliance-counter-v<版本号>/`，结构与 GitHub 下�
 | 措施 | 说明 |
 | --- | --- |
 | **整目录备份** | 更新前复制到旁边的 `<目录名>-backup-<时间>`，出问题直接还原 |
-| **保留 `samples/`** | 里面的示例 CSV 不动 |
+| **保留 `js/battle-data.js`** | 你本地的战报数据文件不会被覆盖 |
 | **保留仓库地址配置** | 覆盖后自动把 `data-repo` 写回 `index.html` |
 
 **首次使用前**：确认 `index.html` 里的 `data-repo` 是你自己的仓库地址（不是 `YOUR-NAME` 占位符），
@@ -324,7 +330,7 @@ node tools/bump-version.mjs 202610122200a
 | **装备与战马** | 按胜率排序，至少 5 场 |
 | **兵书** | 先按**品级**分组（善本 / 手抄 / 残章 / 上卷下卷），再列具体兵书 |
 
-实测（内置示例数据，5172 条武将记录）——**属性确实与胜率正相关**：
+实测（真实战报数据）——**属性确实与胜率正相关**：
 
 ```
 装备智力   <7 → 44%   7~9 → 47%   9~11 → 57%   ≥11 → 56%
@@ -360,7 +366,7 @@ node tools/bump-version.mjs 202610122200a
 > 数据源用的是**原始战报**，不受主分析「排除同名阵容内战」开关的影响——
 > 否则这一页就没有数据了。
 
-实测（内置示例数据，54 场内战、14 个维度）：**开战兵力 +23%**（更高方胜率 73%）、**品级 +20%**、**红度 +10%**；而战马智力 -12%（更高反而输得多，值得留意）。先手胜率 50.9%，说明先后手影响不大——
+实测（真实战报数据）：**开战兵力 +23%**（更高方胜率 73%）、**品级 +20%**、**红度 +10%**；而战马智力 -12%（更高反而输得多，值得留意）。先手胜率 50.9%，说明先后手影响不大——
 
 原始记录：
 而**红度更高方胜率 60.6%**、**品级更高方 56.3%**——同样阵容，培养度就是硬实力。
@@ -519,10 +525,6 @@ node tools/bump-version.mjs 202610122200a
 
 ![克制矩阵](docs/preview-matrix.png)
 
-「生成内置数据」面板（默认脱敏，一键把某张表变成内置示例）：
-
-![生成内置数据](docs/preview-builder.png)
-
 同盟分析（主力玩家 / 主流队伍 / 反制推荐 / 单点克制 / 活跃时段）：
 
 ![同盟分析](docs/preview-alliance.png)
@@ -541,61 +543,13 @@ node tools/bump-version.mjs 202610122200a
 
 ---
 
-## 更新内置数据（一键把某张表变成内置示例）
+## 数据脱敏
 
-内置示例数据有两处，需要一起更新：
+脱敏在 **sanmou-viewer 导出时完成**（勾选「脱敏」选项）：玩家名替换为 `玩家0001`…
+同盟名替换为 `同盟001`…，同一原名永远对应同一假名，统计结果不变但无法反推真实名称。
 
-| 文件 | 用途 |
-| --- | --- |
-| `js/sample-data.js` | 页面「载入示例表」和 `index.html?demo=1` 实际读取的数据 |
-| `samples/alliance_battles_sample.csv` | 与之配套的原始（已脱敏）CSV，便于查阅与再生成 |
-
-**方式一：页面按钮（推荐，不需要 Node）**
-
-1. 像平时一样导入你要作为内置示例的战报表；
-2. 点左侧「**⇩ 生成内置数据**」；
-   也可以点某个批次条目右侧的 `⇩`，只把那一张表转成内置数据；
-3. 在面板里确认来源与脱敏选项，看「转换预览」的统计是否正确；
-4. 点「**下载 sample-data.js**」，用它覆盖项目里的 `js/sample-data.js`；
-5. 可选：点「下载配套 CSV」覆盖 `samples/` 里的示例表，方便一起提交到 git；
-6. 刷新页面即生效。
-
-**方式二：命令行（脚本方式）**
-
-```powershell
-node tools/anonymize.mjs 新战报.csv samples/alliance_battles_sample.csv
-node tools/make-sample.mjs samples/alliance_battles_sample.csv js/sample-data.js
-```
-
-> **内置数据会随项目分发给别人，所以转换时默认开启脱敏。**
-> 关掉「脱敏同盟名与玩家名」时，面板会明确警告——那样会把真实名单一起发出去。
-
----
-
-## 给数据脱敏
-
-要把战报表发给别人（或做成公开示例）时，先用脱敏工具把「同盟名 / 玩家名」替换成一一对应的假名，
-**统计结果完全不变**，但无法反推真实名称：
-
-```powershell
-# 最小用法：只脱敏同盟名与玩家名
-node tools/anonymize.mjs 原始战报.csv 脱敏战报.csv
-
-# 需要更彻底时（战斗Key/父战报里的数字ID、地点坐标也一并替换）
-node tools/anonymize.mjs 原始战报.csv 脱敏战报.csv --anon-id --anon-place
-```
-
-- **假名由原始名的 MD5 派生**：`玩家` + 5 位十六进制（如 `玩家35753`）、`同盟` + 5 位十六进制（如 `同盟45035`）。
-  同一原名在任何批次、任何数据量、任何顺序下都得到**同一个假名**，所以分批生成或追加数据时不会出现
-  「同一个人对应两个假名」的问题。派生时加了一层固定盐值，避免被通用彩虹表反查。
-- 也保留了「按出场次数编号」的旧模式（出场最多的是 `玩家01`），加 `--name-mode=index` 启用。
-- 同一原名永远映射到同一假名，所以「谁常用哪套阵容」「谁跟谁打过」这些关系全部保留。
-- 加 `--report` 可在终端打印完整映射表（自己留存，别外发）。
-- 输入支持 UTF-8 与 GB18030，输出统一为 UTF-8。
-- **明细表也支持**：会自动识别单列的「玩家」「同盟」并脱敏（宽表用的是「攻方玩家/守方玩家」这类列名）。
-
-本项目内置的 `samples/alliance_detail_sample.csv` 与 `js/sample-data.js` 就是用 `make-detail-sample.mjs`
-（内部复用同一套脱敏实现）生成的。
+要把数据随仓库分发（如 GitHub Pages）时务必使用脱敏版。项目 `.gitignore` 默认忽略
+`js/battle-data.js`，防止未脱敏的数据被误提交。
 
 ---
 
@@ -603,67 +557,41 @@ node tools/anonymize.mjs 原始战报.csv 脱敏战报.csv --anon-id --anon-plac
 
 ```
 alliance-counter/
-├─ index.html            页面骨架
-├─ start-server.cmd      可选：本地服务启动脚本
-├─ css/style.css         样式（暗色主题）
+├─ index.html             页面入口（<script src> 引入数据与逻辑）
+├─ start-server.cmd       备选本地服务（file:// 存储受限时用）
+├─ css/style.css          深色主题样式
 ├─ js/
-│  ├─ util.js            DOM/格式化/颜色/画布工具
-│  ├─ csv.js             CSV 解析 + 表头别名与关键词映射
-│  ├─ model.js           战报规范化（阵容归并、等级、时间、去重 ID、还原标准列）
-│  ├─ detail.js          武将级明细表的解析与聚合（一场战斗多行 -> 一条战斗记录 + 武将信息）
-│  ├─ anonymize.js       脱敏与 CSV 序列化（页面与 Node 工具共用同一份实现）
-│  ├─ store.js           localStorage 持久化与叠加去重、批次管理
-│  ├─ analyzer.js        聚合为节点 + 克制关系（收缩、攻守拆分、战损）
-│  ├─ graph.js           力导向克制网络图（粒子流动动画）
-│  ├─ matrix.js          克制热力矩阵
-│  ├─ rank.js            强度排行
-│  ├─ alliance.js        同盟分析（出战画像 + 反制推荐）
-│  ├─ heroes.js          武将分析（战绩 / 配装 / 技能榜）
-│  ├─ table.js           原始战报表格
-│  ├─ app.js             主控与交互
-│  └─ sample-data.js     内置示例表（由 tools/make-sample.mjs 生成）
-├─ samples/              示例战报 CSV
-└─ tools/                开发与验证工具（不参与页面运行，需要 Node.js）
+│  ├─ battle-data.js      ★ 战报数据（sanmou-viewer 导出，git 默认忽略）
+│  ├─ sanmou-source.js    数据装载：battleData → 内部 battle 结构
+│  ├─ model.js            阵容标准化、父战报串链、多段合并
+│  ├─ store.js            IndexedDB 缓存
+│  ├─ analyzer.js         统计口径（一次出战=1场）、克制关系、强度分
+│  ├─ graph.js / matrix.js / rank.js / table.js   克制网络图 / 矩阵 / 排行 / 明细表
+│  ├─ alliance.js / heroes.js / mirror.js / gear.js / player.js   五个分析视图
+│  ├─ app.js              界面装配与交互
+│  └─ util.js / version.js / update.js            工具 / 版本 / 更新检查
+├─ tools/                 开发脚本（与页面运行无关）
+└─ version.json           版本信息（update.js 读取）
 ```
-
-页面为**零依赖纯前端**：不用打包、不用装环境，双击 `index.html` 即可。
-数据全在本地浏览器里，不会外传。把整个文件夹打包发给别人，对方双击 `index.html` 就能直接用。
-
----
 
 ## 开发者工具
 
-`tools/` 下的脚本只在开发/维护时需要 **Node.js**，与页面运行无关，普通使用者可以整目录忽略：
-
-- `anonymize.mjs` / `profile.mjs` / `test-logic.mjs` / `make-sample.mjs`：只用 Node 内置模块，无需 `npm install`。
-- `test-dom.mjs`：额外需要 `npm i jsdom`。
-
 ```powershell
-# 数据画像：宽表的阵容分布、样本量、对局 pair 统计
-node tools/profile.mjs samples/xxx.csv
-
-# 明细表画像：战斗结构、各列非空率、技能/装备/武将取值分布
-node tools/profile-detail.mjs samples/alliance_detail_sample.csv
-
-# 验证明细表解析与聚合（战斗数、兵力自洽性、结果分布）
-node tools/test-detail.mjs samples/alliance_detail_sample.csv
-
-# 把明细表做成内置示例数据（自动精简列 + 强制脱敏）
-node tools/make-detail-sample.mjs 明细表.csv samples/alliance_detail_sample.csv js/sample-data.js
-
-# 脱敏：把同盟名 / 玩家名替换成一一对应的假名（统计结果不变）
-node tools/anonymize.mjs 原始.csv 脱敏.csv [--anon-id] [--anon-place] [--report]
-
-# 离线验证解析 / 规范化 / 聚合，并做独立交叉校验
-node tools/test-logic.mjs . samples/alliance_battles_sample.csv
-
 # 端到端 DOM 冒烟测试（临时静态服务 + jsdom + 假画布）
-npm i jsdom
 node tools/test-dom.mjs .
 
-# 重新生成内置示例数据
-node tools/make-sample.mjs samples/alliance_battles_sample.csv js/sample-data.js
+# 强度排行口径验证（合成数据 + 真实数据回归）
+node tools/test-strength.mjs
+
+# 玩家分析审计（合成数据，含性能基线）
+node tools/audit-player.mjs
+
+# 版本号生成（改 version.json 后运行）
+node tools/bump-version.mjs
 ```
+
+测试数据说明：`tools/` 下的测试默认读取 `js/battle-data.js` 做真实数据回归，
+没有该文件时合成数据部分照常运行。
 
 ---
 

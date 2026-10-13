@@ -407,6 +407,8 @@ window.AC = window.AC || {};
     });
     const h = this.data.heroMap.get(name);
     if (h) this.renderDetail(h);
+    // 切换武将后详情区从头看
+    U.scrollTopAll(this.detailHost);
   };
 
   HeroesView.prototype.renderDetail = function (h) {

@@ -131,34 +131,34 @@ button, input, select { font-family: inherit; }
 .hint { margin: 8px 0 0; font-size: 11.5px; line-height: 1.6; color: var(--text-faint); }
 .hint.inline { margin: 0; align-self: center; }
 
-/* ---------------- 拖拽导入 ---------------- */
-.dropzone {
+/* ---------------- 数据源面板 ---------------- */
+.src-panel { margin-bottom: 10px; }
+.src-stats { display: flex; flex-direction: column; gap: 4px; }
+.src-row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  font-size: 12px; padding: 4px 2px;
+  border-bottom: 1px dashed rgba(78, 120, 180, .18);
+}
+.src-row:last-child { border-bottom: none; }
+.src-row .k { color: var(--text-faint); flex: none; }
+.src-row .v { color: var(--text); font-variant-numeric: tabular-nums; text-align: right; }
+.src-empty { font-size: 12px; line-height: 1.7; color: var(--text-faint); }
+.src-empty strong { display: block; color: var(--hot); margin-bottom: 4px; font-size: 12.5px; }
+
+/* ---------------- 上传数据文件 ---------------- */
+.upload-zone {
   border: 1.5px dashed #2c3d61;
   border-radius: 10px;
-  padding: 16px 10px;
+  padding: 14px 10px;
   text-align: center;
   cursor: pointer;
   transition: .2s ease;
   background: rgba(30, 44, 74, .25);
+  margin-bottom: 4px;
 }
-.dropzone:hover, .dropzone.over { border-color: var(--accent); background: rgba(78, 168, 255, .1); }
-.dropzone-inner strong { display: block; font-size: 13px; }
-.dropzone-inner span { display: block; margin-top: 4px; font-size: 11px; color: var(--text-faint); }
-
-.batch-list { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
-.batch-item {
-  display: flex; align-items: center; gap: 8px;
-  padding: 6px 8px; font-size: 11.5px;
-  background: rgba(30, 44, 74, .4);
-  border: 1px solid var(--line-soft);
-  border-radius: 8px;
-}
-.batch-item .bi-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.batch-item .bi-count { color: var(--accent); font-variant-numeric: tabular-nums; }
-.batch-item .bi-del { cursor: pointer; color: var(--text-faint); padding: 0 2px; }
-.batch-item .bi-del:hover { color: var(--hot); }
-.batch-item .bi-gen { cursor: pointer; color: var(--text-faint); padding: 0 2px; }
-.batch-item .bi-gen:hover { color: var(--good); }
+.upload-zone:hover, .upload-zone.over { border-color: var(--accent); background: rgba(78, 168, 255, .1); }
+.upload-zone strong { display: block; font-size: 12.5px; }
+.upload-zone span { display: block; margin-top: 4px; font-size: 11px; color: var(--text-faint); }
 
 .row-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
 
@@ -476,20 +476,6 @@ canvas { display: block; width: 100%; height: 100%; }
 /* 关注的一方（当前 pair 里的那套阵容） */
 .battle-mini .bm-side.bm-focus .bm-comp { text-decoration: underline; text-decoration-color: rgba(120, 180, 255, .45); }
 
-/* ---------------- 全局拖拽遮罩 ---------------- */
-.global-drop {
-  position: fixed; inset: 0; z-index: 90;
-  background: rgba(8, 12, 24, .8); backdrop-filter: blur(3px);
-  display: flex; align-items: center; justify-content: center;
-  opacity: 0; pointer-events: none; transition: opacity .18s;
-}
-.global-drop.show { opacity: 1; }
-.global-drop-inner {
-  padding: 30px 54px; border: 2px dashed var(--accent); border-radius: 18px;
-  font-size: 17px; font-weight: 600; color: var(--accent);
-  box-shadow: 0 0 50px rgba(78, 168, 255, .35);
-}
-
 /* ---------------- Toast ---------------- */
 .toast-host { position: fixed; right: 18px; bottom: 18px; z-index: 120; display: flex; flex-direction: column; gap: 8px; }
 .toast {
@@ -503,68 +489,19 @@ canvas { display: block; width: 100%; height: 100%; }
 .toast.err { border-color: rgba(255, 90, 110, .5); }
 .toast b { color: var(--accent); }
 
-/* ---------------- 生成内置数据：抽屉面板 ---------------- */
 .btn-accent {
   background: linear-gradient(135deg, #2f9e6e, #2380c4);
   border-color: transparent; font-weight: 600;
 }
+
 .btn-accent:hover { box-shadow: 0 4px 16px rgba(47, 158, 110, .35); }
-
-.drawer-mask {
-  position: fixed; inset: 0; z-index: 190;
-  background: rgba(4, 8, 18, .62); backdrop-filter: blur(2px);
-  opacity: 0; pointer-events: none; transition: opacity .25s;
-}
-.drawer-mask.open { opacity: 1; pointer-events: auto; }
-
-.drawer {
-  position: fixed; top: 0; right: 0; bottom: 0; width: 404px; max-width: 92vw; z-index: 200;
-  display: flex; flex-direction: column;
-  background: linear-gradient(180deg, #121c33, #0c1425);
-  border-left: 1px solid var(--line);
-  box-shadow: -18px 0 46px rgba(0, 0, 0, .5);
-  transform: translateX(102%);
-  transition: transform .3s cubic-bezier(.2, .8, .2, 1);
-}
-.drawer.open { transform: none; }
-
-.drawer-head {
-  display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
-  padding: 16px 16px 12px; border-bottom: 1px solid var(--line);
-}
-.drawer-head h2 { margin: 0; font-size: 15px; font-weight: 600; }
-.drawer-sub { margin: 4px 0 0; font-size: 11.5px; color: var(--text-faint); }
-.drawer-close {
-  flex: none; width: 28px; height: 28px; border-radius: 8px; cursor: pointer;
-  border: 1px solid var(--line); background: rgba(30, 44, 74, .5); color: var(--text-dim);
-  font-size: 13px; line-height: 1; transition: .18s;
-}
-.drawer-close:hover { color: #fff; border-color: var(--hot); }
-
-.drawer-body { flex: 1; overflow-y: auto; padding: 0 16px 22px; }
-.drawer-body::-webkit-scrollbar { width: 8px; }
-.drawer-body::-webkit-scrollbar-thumb { background: #26334f; border-radius: 8px; }
 
 .select {
   width: 100%; padding: 8px 10px; border-radius: 9px; outline: none; cursor: pointer;
   background: var(--panel-2); border: 1px solid var(--line); color: var(--text); font-size: 12.5px;
 }
-.select:focus { border-color: var(--accent); }
 
-.gen-preview { font-size: 12px; line-height: 1.7; }
-.gen-preview .gp-row {
-  display: flex; justify-content: space-between; gap: 10px;
-  padding: 5px 0; border-bottom: 1px dashed var(--line-soft);
-}
-.gen-preview .gp-row b { color: var(--accent); font-variant-numeric: tabular-nums; }
-.gen-preview .gp-code {
-  margin-top: 8px; padding: 8px 10px; border-radius: 8px; overflow-x: auto;
-  background: #0a1120; border: 1px solid var(--line-soft);
-  color: var(--text-dim); font-family: Consolas, "Courier New", monospace; font-size: 11px;
-  white-space: pre; line-height: 1.5;
-}
-.gen-preview .gp-warn { color: var(--hot); }
-.gen-preview .gp-ok { color: var(--good); }
+.select:focus { border-color: var(--accent); }
 
 /* ---------------- 同盟分析 ---------------- */
 .ally-wrap {
@@ -1139,8 +1076,15 @@ details.fold > .fold-summary + * { margin-top: 0; }
 .adv-risks { font-size: 11.5px; color: #e5a86b; margin-top: 4px; }
 .adv-risks-t { color: #8fa3c4; }
 /* 玩家筛选栏 */
+/* 筛选栏在固定区（.pf-host 直属），成员列表在 .pf-scroll 独立滚动——
+   滚动条只出现在列表旁边，筛选栏始终可见 */
 .pf-bar { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px; margin-bottom: 8px;
   background: #0d1526; border: 1px solid #1b2740; border-radius: 8px; }
+.pf-host { display: flex; flex-direction: column; overflow: hidden; padding: 10px; min-height: 0; }
+.pf-host .pf-bar { flex: none; }
+.pf-scroll { flex: 1; min-height: 0; overflow-y: auto; margin: 0 -10px; padding: 0 10px; }
+.pf-scroll::-webkit-scrollbar { width: 8px; }
+.pf-scroll::-webkit-scrollbar-thumb { background: #26334f; border-radius: 8px; }
 .pf-item { display: flex; flex-direction: column; gap: 2px; flex: 1 1 88px; min-width: 0; }
 .pf-item-kw { flex: 2 1 150px; }
 .pf-label { font-size: 10px; color: #5d6f8f; }

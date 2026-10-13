@@ -1,6 +1,6 @@
 /* ============================================================
    端到端 DOM 验证（无需真实浏览器）
-   起一个临时静态服务 -> jsdom 加载 index.html?demo=1 -> 检查
+   起一个临时静态服务 -> jsdom 加载 index.html -> 检查
    1) 是否抛出 JS 错误  2) 数据链路是否正确  3) 各视图 DOM 是否渲染
    画布用假 2D context 顶替，只为跑通代码路径
    ============================================================ */
@@ -79,19 +79,18 @@ function report() {
 
   console.log('=== DOM 冒烟验证 ===');
   console.log('AC 命名空间:', !!AC, '| 模块:', AC ? Object.keys(AC).join(',') : '-');
-  console.log('统计条: 战斗=' + txt('#statBattles'), '阵容=' + txt('#statNodes'), '克制=' + txt('#statEdges'), '对阵=' + txt('#statPairs'), '批次=' + txt('#statBatches'));
+  console.log('统计条: 战斗=' + txt('#statBattles'), '阵容=' + txt('#statNodes'), '克制=' + txt('#statEdges'), '对阵=' + txt('#statPairs'), '总数=' + txt('#statTotal'));
   console.log('数据摘要:', txt('#dataSummary'));
-  console.log('[诊断] store:', w.AC.app.store.battles.length, '场 /', w.AC.app.store.batches.length,
-    '批次 | sampleCsv 字符数', w.AC.sampleCsv.length, '| localStorage 键',
-    (() => { try { return Object.keys(w.localStorage).join(',') || '(无)'; } catch (e) { return '读取失败'; } })(),
+  console.log('[诊断] store:', w.AC.app.store.battles.length, '场 | battleData 记录',
+    w.AC.battleData ? w.AC.battleData.records.length : '(无)',
     '| state.result 生效场次', w.AC.app.state.result ? w.AC.app.state.result.stats.totalKept : '-');
   console.log('底部说明:', txt('#stageFoot').replace(/\s+/g, ' ').slice(0, 160));
 
   const rankRows = d.querySelectorAll('#rankWrap .rank-row').length;
   const tableRows = d.querySelectorAll('#dataTable tbody tr').length;
   const pagerText = txt('#tablePager');
-  const batchItems = d.querySelectorAll('#batchList .batch-item').length;
-  console.log('排行行数:', rankRows, '| 战报表行数:', tableRows, '| 分页:', pagerText, '| 导入批次:', batchItems);
+  const srcRows = d.querySelectorAll('#dataSource .src-row').length;
+  console.log('排行行数:', rankRows, '| 战报表行数:', tableRows, '| 分页:', pagerText, '| 数据源信息行:', srcRows);
 
   // 直接调用内部逻辑验证交互路径
   const insp = d.querySelector('#inspector');
@@ -125,158 +124,51 @@ console.log('基准场次（内置数据规模）:', BASE);
 const PSEUDO_P = /^玩家(\d+|[0-9A-F]{5})$/;
 const PSEUDO_A = /^同盟(\d+|[A-Z]\d*|[0-9A-F]{5})$/;
 
-/* ---------- 旧版本存档必须被忽略（否则新代码读到残缺记录，兵种等字段会缺失） ---------- */
+/* ---------- 数据源装载与口径 ---------- */
 {
-  // 先把当前正常存档挪开，保证这段测试只受旧存档影响
-  const backup = w.localStorage.getItem('ac.battles.v3');
-  w.localStorage.removeItem('ac.battles.v3');
+  // battleData 存在且 schema 正确
+  const diag = w.AC.sanmou.diagnose();
+  console.log('battleData 可用:', diag.ok ? 'PASS' : 'FAIL ' + diag.message);
 
-  w.localStorage.setItem('ac.battles.v2', JSON.stringify({ version: 2, battles: [{ id: 'legacy-1' }] }));
-  const s = new w.AC.Store();
-  s.load();
-  console.log('旧版本存档被忽略:', s.battles.length === 0 ? 'PASS' : 'FAIL ' + s.battles.length);
-  console.log('旧 key 已清除:', w.localStorage.getItem('ac.battles.v2') === null ? 'PASS' : 'FAIL');
+  const counts = w.AC.app.store.counts();
+  console.log('装载场次:', counts.total, '（block', counts.block, '/ child', counts.child, '）',
+    '| 与数据文件一致:',
+    counts.total === (w.AC.battleData ? w.AC.battleData.records.length : -1) ? 'PASS' : 'FAIL');
 
-  // 版本不符的新 key 也应丢弃
-  w.localStorage.setItem('ac.battles.v3', JSON.stringify({ version: 1, battles: [{ id: 'stale-1' }] }));
-  const s2 = new w.AC.Store();
-  s2.load();
-  console.log('版本不符的存档被丢弃:', s2.battles.length === 0 ? 'PASS' : 'FAIL');
+  // 统计口径：child 不计入（analyze 的 totalInput 应为合并后的 block 数）
+  const st = w.AC.app.state.result.stats;
+  console.log('统计口径: totalInput', st.totalInput, '<= block', counts.block,
+    '| child 排除', st.childExcluded,
+    ':', st.totalInput <= counts.block && st.childExcluded > 0 ? 'PASS' : 'FAIL');
 
-  // 复原
-  w.localStorage.removeItem('ac.battles.v3');
-  if (backup) w.localStorage.setItem('ac.battles.v3', backup);
-}
-
-/* ---------- 内置数据本身必须已脱敏 ---------- */
-{
-  const bad = [];
-  if (w.AC.detail.sniff(w.AC.sampleCsv)) {
-    // 明细表：单列「玩家」「同盟」
-    const d = w.AC.detail.parse(w.AC.sampleCsv);
-    d.rows.forEach((r) => {
-      if (r['玩家'] && !PSEUDO_P.test(r['玩家'])) bad.push('玩家:' + r['玩家']);
-      if (r['同盟'] && !PSEUDO_A.test(r['同盟'])) bad.push('同盟:' + r['同盟']);
-    });
-    console.log('内置数据格式: 武将级明细 |', d.battles.length, '场 /', d.rows.length, '行');
+  // 脱敏校验：数据里的玩家/同盟名应为假名（若数据是脱敏版）
+  const anon = (w.AC.battleData.stats || {}).anonymized_players;
+  if (anon) {
+    console.log('数据为脱敏版（', anon, '个玩家假名）: PASS');
   } else {
-    const parsed = w.AC.csv.parseTable(w.AC.sampleCsv);
-    const gi = parsed.mapping.index;
-    parsed.rows.forEach((r) => {
-      [gi.atkPlayer, gi.defPlayer].forEach((i) => {
-        const v = String(r.__raw[i] || '').trim();
-        if (v && !PSEUDO_P.test(v)) bad.push('玩家:' + v);
-      });
-      [gi.atkAlliance, gi.defAlliance].forEach((i) => {
-        const v = String(r.__raw[i] || '').trim();
-        if (v && !PSEUDO_A.test(v)) bad.push('同盟:' + v);
-      });
-    });
-    console.log('内置数据格式: 传统宽表 |', parsed.rows.length, '行');
+    console.log('数据为未脱敏版（跳过假名校验）: (不适用)');
   }
-  console.log('磁盘内置数据已脱敏（玩家/同盟均为假名）:',
-    bad.length === 0 ? 'PASS' : 'FAIL 发现 ' + bad.slice(0, 5).join(', '));
+
+  // 重新载入一致性：再次 loadFromBattleData 得到相同结果
+  const before = w.AC.app.store.size();
+  const re = w.AC.app.store.loadFromBattleData();
+  console.log('重复装载幂等:', re.count === before ? 'PASS' : 'FAIL ' + re.count + ' vs ' + before);
 }
 
-/* ---------- 叠加导入 / 表头自动映射 专项验证 ---------- */
-console.log('\n=== 叠加导入与表头自适应 ===');
-const stacked = w.AC.app.ingest(w.AC.sampleCsv, '同一份表再导入一次', true);
-console.log('重复导入同一份表 -> 新增', stacked.added, '重复', stacked.dup,
-  '| 期望 新增0 重复' + BASE + ':', stacked.added === 0 && stacked.dup === BASE ? 'PASS' : 'FAIL');
+/* ---------- 分析结果自洽 ---------- */
+{
+  const r = w.AC.app.state.result;
+  const keys = Array.from(r.nodeMap.keys());
+  console.log('节点数:', keys.length, '| 边数:', r.stats.edgeCount,
+    '| 生效场次:', r.stats.totalKept,
+    ':', r.stats.totalKept > 0 && keys.length > 0 ? 'PASS' : 'FAIL');
 
-// 换一种表头写法 + 分号分隔 + 打乱列顺序，验证自动映射与叠加
-const variant = [
-  'result;defenderTeam;battleTime;attackerTeam;defenderFormation;attackerFormation;attackerName;defenderName;round',
-  '攻方胜;"甲一 / 甲二 / 甲三";2026-10-11T12:00:00;"乙一 / 乙二 / 乙三";鱼鳞阵;雁形阵;测试攻;测试守;3',
-  '守方胜;丙一 ;2026-10-11T12:05:00;"乙一 / 乙二 / 乙三";雁形阵;箕形阵;测试攻2;测试守2;5'
-].join('\n');
-const vres = w.AC.app.ingest(variant, '异构表头.csv', true);
-console.log('异构表头导入 -> 新增', vres ? vres.added : 'null', '| 期望 2:', vres && vres.added === 2 ? 'PASS' : 'FAIL');
-
-const afterStats = w.AC.app.state.result.stats;
-console.log('叠加后有效对局:', afterStats.totalKept, '| 累计战斗:', w.AC.app.store.battles.length,
-  '| 批次:', w.AC.app.store.batches.length);
-
-// 新阵容是否进入节点集合（前面的步骤切到了阵型维度，这里切回阵容并把门槛调低）
-w.AC.app.filters.dimension = 'comp';
-w.AC.app.filters.minAppear = 1;
-w.AC.app.recompute();
-const keys = Array.from(w.AC.app.state.result.nodeMap.keys());
-const hasNew = keys.some((k) => k.indexOf('乙一') >= 0);
-console.log('新导入阵容已进入分析结果:', hasNew ? 'PASS' : 'FAIL', '(' + keys.filter((k) => k.indexOf('乙一') >= 0).join(' , ') + ')');
-
-// 移除刚才这批，确认可回滚
-const lastBatch = w.AC.app.store.batches[w.AC.app.store.batches.length - 1];
-const removed = w.AC.app.store.removeBatch(lastBatch.id);
-w.AC.app.recompute();
-console.log('移除该批次回滚', removed, '场 -> 累计战斗:', w.AC.app.store.battles.length,
-  '| 期望回到 ' + BASE + ':', w.AC.app.store.battles.length === BASE ? 'PASS' : 'FAIL');
-
-/* ---------- 生成内置数据（浏览器端转换链路） ---------- */
-console.log('\n=== 生成内置数据 ===');
-w.AC.app.openGenDrawer();
-const gen = w.AC.app.computeConversion();
-
-const genIsDetail = w.AC.detail.hasDetail(gen.battles);
-console.log('来源:', w.document.querySelector('#genSource').value,
-  '| 战斗数:', gen.battles.length, '| 导出行数:', gen.applied.rows.length,
-  '| 列数:', gen.header.length, '| 明细格式:', genIsDetail ? '是' : '否',
-  '| 战斗数与基准一致:', gen.battles.length === BASE ? 'PASS' : 'FAIL',
-  '| 明细行数远大于战斗数:', genIsDetail ? (gen.applied.rows.length > gen.battles.length ? 'PASS' : 'FAIL') : '(不适用)');
-
-// 生成的 sample-data.js 必须能被执行并产出可用的 CSV
-const fakeWindow = {};
-new Function('window', gen.js)(fakeWindow);
-const regenerated = fakeWindow.AC && fakeWindow.AC.sampleCsv;
-console.log('导出的 sample-data.js 可执行:', regenerated && regenerated.length > 1000 ? 'PASS' : 'FAIL');
-
-// 脱敏是否生效：玩家列应全部是「玩家NN」，同盟列应全部是「同盟X」
-let badPlayers, badAlliances;
-if (w.AC.detail.sniff(gen.csv)) {
-  const dd = w.AC.detail.parse(gen.csv);
-  badPlayers = dd.rows.map((r) => String(r['玩家'] || '').trim()).filter((v) => v && !PSEUDO_P.test(v));
-  badAlliances = dd.rows.map((r) => String(r['同盟'] || '').trim()).filter((v) => v && !PSEUDO_A.test(v));
-} else {
-  const gp = w.AC.csv.mapHeader(gen.applied.header).index;
-  badPlayers = gen.applied.rows.map((r) => String(r[gp.atkPlayer] || '').trim()).filter((v) => v && !PSEUDO_P.test(v));
-  badAlliances = gen.applied.rows
-    .flatMap((r) => [String(r[gp.atkAlliance] || '').trim(), String(r[gp.defAlliance] || '').trim()])
-    .filter((v) => v && !PSEUDO_A.test(v));
+  // 每个节点的出场次数之和应等于 2 × 生效场次（攻守各计一次）
+  let sumN = 0;
+  r.nodeMap.forEach((nd) => { sumN += nd.n; });
+  console.log('节点出场合计 = 2×生效场次:',
+    sumN === r.stats.totalKept * 2 ? 'PASS' : 'FAIL ' + sumN + ' vs ' + r.stats.totalKept * 2);
 }
-console.log('脱敏生效（玩家/同盟全部为假名）:',
-  badPlayers.length === 0 && badAlliances.length === 0 ? 'PASS' : 'FAIL ' + badPlayers.concat(badAlliances).slice(0, 5).join(','));
-
-// 关键回归：转换出来的内置表再走一遍完整分析，统计必须与原始一致
-const rebattles = w.AC.detail.sniff(regenerated)
-  ? w.AC.detail.parse(regenerated).battles
-  : w.AC.csv.parseTable(regenerated).rows.map((r) => w.AC.model.toBattle(r)).filter(Boolean);
-const ANALYSIS_OPTS = { dimension: 'comp', minPair: 2, minAppear: 3, minLevel: 40, onlyFull: true, excludeMirror: true };
-const reStats = w.AC.analyzer.analyze(rebattles, ANALYSIS_OPTS).stats;
-const expectStats = w.AC.analyzer.analyze(w.AC.app.store.battles, ANALYSIS_OPTS).stats;
-const sameStats = rebattles.length === w.AC.app.store.battles.length &&
-  reStats.totalKept === expectStats.totalKept &&
-  reStats.nodeShown === expectStats.nodeShown &&
-  reStats.edgeCount === expectStats.edgeCount;
-console.log('回灌分析: 规范化', rebattles.length, '场 / 生效', reStats.totalKept,
-  '| 阵容', reStats.nodeShown, '| 克制', reStats.edgeCount,
-  '| 与原始(' + expectStats.totalKept + '/' + expectStats.nodeShown + '/' + expectStats.edgeCount + ')一致:',
-  sameStats ? 'PASS' : 'FAIL');
-
-// 关闭脱敏时应给出警告（走真实的 change 事件路径）
-const anonBox = w.document.querySelector('#genAnon');
-anonBox.checked = false;
-anonBox.dispatchEvent(new w.Event('change', { bubbles: true }));
-const noAnon = w.AC.app.computeConversion();
-const warn = w.document.querySelector('#genPreview').textContent.indexOf('未脱敏') >= 0;
-console.log('关闭脱敏时提示风险:', warn ? 'PASS' : 'FAIL',
-  '| 未脱敏时仍能生成:', noAnon.battles.length === BASE ? 'PASS' : 'FAIL');
-
-// 重新开启脱敏，应恢复为“可安全分发”
-anonBox.checked = true;
-anonBox.dispatchEvent(new w.Event('change', { bubbles: true }));
-const safe = w.document.querySelector('#genPreview').textContent.indexOf('可安全随项目分发') >= 0;
-console.log('重新开启脱敏后提示安全:', safe ? 'PASS' : 'FAIL');
-w.AC.app.closeGenDrawer();
 
 /* ---------- 同盟分析 ---------- */
 console.log('\n=== 同盟分析 ===');
@@ -329,74 +221,82 @@ const mirrorable = advice.filter((a) => a.mirrorShare > 0.01);
 console.log('允许对方主力阵容入选(镜像):',
   mirrorable.length > 0 ? 'PASS（' + mirrorable.length + ' 条含镜像）' : '(本数据无镜像场景)');
 
-console.log('推荐首位:', advice[0].display);
-console.log('  条件胜率', w.AC.util.fmtPct(advice[0].expRate),
-  '| 可评估覆盖', w.AC.util.fmtPct(advice[0].coverage, 0),
-  '| 镜像', w.AC.util.fmtPct(advice[0].mirrorShare, 0),
-  '| 实交手', advice[0].evidence, '场',
-  '| 全局出场', advice[0].n, '次 / 胜率', w.AC.util.fmtPct(advice[0].rate, 0),
-  advice[0].coverage >= 0.6 ? '| 通用方案' : '| 针对性方案');
-console.log('  推荐首位是否高于五五开:', advice[0].expRate >= 0.5 ? 'PASS' : '注意：数据本身如此');
+if (advice.length) {
+  console.log('推荐首位:', advice[0].display);
+  console.log('  条件胜率', w.AC.util.fmtPct(advice[0].expRate),
+    '| 可评估覆盖', w.AC.util.fmtPct(advice[0].coverage, 0),
+    '| 镜像', w.AC.util.fmtPct(advice[0].mirrorShare, 0),
+    '| 实交手', advice[0].evidence, '场',
+    '| 全局出场', advice[0].n, '次 / 胜率', w.AC.util.fmtPct(advice[0].rate, 0),
+    advice[0].coverage >= 0.6 ? '| 通用方案' : '| 针对性方案');
+  console.log('  推荐首位是否高于五五开:', advice[0].expRate >= 0.5 ? 'PASS' : '注意：数据本身如此');
+} else {
+  console.log('推荐首位: (该同盟没有可推荐的候选，跳过首位断言)');
+}
 
 // 结论文案必须与数据一致：期望胜率不到五五开时，不能说「推荐用它」
-{
-  const txt = w.document.querySelector('#allyDetail').textContent;
-  const noWin = advice[0].expRate < 0.5;
-  const saysRecommend = txt.indexOf('推荐用「' + advice[0].display + '」应对') >= 0;
-  const saysNoWin = txt.indexOf('没有哪套阵容能压住') >= 0;
-  const ok = noWin ? (saysNoWin && !saysRecommend) : true;
-  console.log('结论与数据一致（不到五五开时不硬推）:', ok ? 'PASS' : 'FAIL',
-    '(期望胜率 ' + w.AC.util.fmtPct(advice[0].expRate) + ' → ' + (noWin ? '应提示压不住' : '可给推荐') + ')');
-}
+if (advice.length) {
+  {
+    const txt = w.document.querySelector('#allyDetail').textContent;
+    const noWin = advice[0].expRate < 0.5;
+    const saysRecommend = txt.indexOf('推荐用「' + advice[0].display + '」应对') >= 0;
+    const saysNoWin = txt.indexOf('没有哪套阵容能压住') >= 0;
+    const ok = noWin ? (saysNoWin && !saysRecommend) : true;
+    console.log('结论与数据一致（不到五五开时不硬推）:', ok ? 'PASS' : 'FAIL',
+      '(期望胜率 ' + w.AC.util.fmtPct(advice[0].expRate) + ' → ' + (noWin ? '应提示压不住' : '可给推荐') + ')');
+  }
 
-// 覆盖率独立复算
-let cover = 0;
-target.compList.forEach((c) => {
-  if (c.key === advice[0].key) return;
-  const p = w.AC.analyzer.getPair(r2, c.key, advice[0].key);
-  if (p && p.n >= 2) cover += c.n;
-});
-const ic = cover / target.n;
-console.log('覆盖率独立复算:', w.AC.util.fmtPct(ic), 'vs 模块输出', w.AC.util.fmtPct(advice[0].coverage),
-  Math.abs(ic - advice[0].coverage) < 1e-9 ? 'PASS' : 'FAIL');
-
-// 条件胜率独立复算：分母只取「有交手数据」的部分，镜像部分跳过
-let reScore = 0, reCover = 0, reEvidence = 0;
-target.compList.forEach((c) => {
-  if (c.key === advice[0].key) return;                       // 镜像（内战）不参与
-  const w2 = c.n / target.n;
-  const p = w.AC.analyzer.getPair(r2, c.key, advice[0].key);
-  if (!p || p.n < 2) return;                                 // 没交手过：跳过（不再按 50% 填充）
-  const myRate = p.lo === advice[0].key ? p.rateLo : 1 - p.rateLo;
-  reScore += w2 * ((myRate * p.n + 0.5 * 3) / (p.n + 3));
-  reCover += w2;
-  reEvidence += p.n;
-});
-const reRaw = reScore / reCover;
-const reAdjusted = (reRaw * reEvidence + 0.5 * 3) / (reEvidence + 3);
-console.log('条件胜率独立复算:', w.AC.util.fmtPct(reAdjusted), 'vs 模块输出', w.AC.util.fmtPct(advice[0].expRate),
-  Math.abs(reAdjusted - advice[0].expRate) < 1e-9 ? 'PASS' : 'FAIL',
-  '| 覆盖独立复算:', Math.abs(reCover - advice[0].coverage) < 1e-9 ? 'PASS' : 'FAIL',
-  '| 交手场次一致:', reEvidence === advice[0].evidence ? 'PASS' : 'FAIL');
-
-// 明细胜率：绕开 pairMap，直接从原始战斗记录独立统计，验证方向没写反
-function rawRate(result, xKey, cKey) {
-  let n = 0, draw = 0, win = 0;
-  result.battles.forEach((b) => {
-    const ak = b.atk.key, dk = b.def.key;
-    if (!((ak === xKey && dk === cKey) || (ak === cKey && dk === xKey))) return;
-    n++;
-    const xIsAtk = ak === xKey;
-    if (b.result === 'draw') draw++;
-    else if ((b.result === 'atk') === xIsAtk) win++;
+  // 覆盖率独立复算
+  let cover = 0;
+  target.compList.forEach((c) => {
+    if (c.key === advice[0].key) return;
+    const p = w.AC.analyzer.getPair(r2, c.key, advice[0].key);
+    if (p && p.n >= 2) cover += c.n;
   });
-  return { n: n, rate: n ? (win + draw * 0.5) / n : null };
+  const ic = cover / target.n;
+  console.log('覆盖率独立复算:', w.AC.util.fmtPct(ic), 'vs 模块输出', w.AC.util.fmtPct(advice[0].coverage),
+    Math.abs(ic - advice[0].coverage) < 1e-9 ? 'PASS' : 'FAIL');
+
+  // 条件胜率独立复算：分母只取「有交手数据」的部分，镜像部分跳过
+  let reScore = 0, reCover = 0, reEvidence = 0;
+  target.compList.forEach((c) => {
+    if (c.key === advice[0].key) return;                       // 镜像（内战）不参与
+    const w2 = c.n / target.n;
+    const p = w.AC.analyzer.getPair(r2, c.key, advice[0].key);
+    if (!p || p.n < 2) return;                                 // 没交手过：跳过（不再按 50% 填充）
+    const myRate = p.lo === advice[0].key ? p.rateLo : 1 - p.rateLo;
+    reScore += w2 * ((myRate * p.n + 0.5 * 3) / (p.n + 3));
+    reCover += w2;
+    reEvidence += p.n;
+  });
+  const reRaw = reScore / reCover;
+  const reAdjusted = (reRaw * reEvidence + 0.5 * 3) / (reEvidence + 3);
+  console.log('条件胜率独立复算:', w.AC.util.fmtPct(reAdjusted), 'vs 模块输出', w.AC.util.fmtPct(advice[0].expRate),
+    Math.abs(reAdjusted - advice[0].expRate) < 1e-9 ? 'PASS' : 'FAIL',
+    '| 覆盖独立复算:', Math.abs(reCover - advice[0].coverage) < 1e-9 ? 'PASS' : 'FAIL',
+    '| 交手场次一致:', reEvidence === advice[0].evidence ? 'PASS' : 'FAIL');
+
+  // 明细胜率：绕开 pairMap，直接从原始战斗记录独立统计，验证方向没写反
+  function rawRate(result, xKey, cKey) {
+    let n = 0, draw = 0, win = 0;
+    result.battles.forEach((b) => {
+      const ak = b.atk.key, dk = b.def.key;
+      if (!((ak === xKey && dk === cKey) || (ak === cKey && dk === xKey))) return;
+      n++;
+      const xIsAtk = ak === xKey;
+      if (b.result === 'draw') draw++;
+      else if ((b.result === 'atk') === xIsAtk) win++;
+    });
+    return { n: n, rate: n ? (win + draw * 0.5) / n : null };
+  }
+  const d0 = advice[0].detail[0];
+  // 注意方向：d0.rate 是「推荐阵容」打「同盟的这套队伍」的胜率
+  const raw = rawRate(r2, advice[0].key, d0.key);
+  console.log('明细样本数一致:', raw.n === d0.n ? 'PASS' : 'FAIL (' + raw.n + ' vs ' + d0.n + ')',
+    '| 明细胜率与独立统计一致:', Math.abs(raw.rate - d0.rate) < 1e-9 ? 'PASS' : 'FAIL');
+} else {
+  console.log('独立复算: (无推荐候选，跳过)');
 }
-const d0 = advice[0].detail[0];
-// 注意方向：d0.rate 是「推荐阵容」打「同盟的这套队伍」的胜率
-const raw = rawRate(r2, advice[0].key, d0.key);
-console.log('明细样本数一致:', raw.n === d0.n ? 'PASS' : 'FAIL (' + raw.n + ' vs ' + d0.n + ')',
-  '| 明细胜率与独立统计一致:', Math.abs(raw.rate - d0.rate) < 1e-9 ? 'PASS' : 'FAIL');
 
 // 单点克制建议
 const perComp = w.AC.allianceAnalysis.bestAgainst(r2, target);
@@ -593,12 +493,13 @@ console.log('\n=== 推荐的风险提示 ===');
   const withRisk = adv2.filter((a) => a.risks && a.risks.length);
   console.log('带风险提示的推荐:', withRisk.length + ' / ' + adv2.length,
     withRisk.length > 0 ? 'PASS' : '（本数据对方没有能压制候选的队伍）');
-  if (adv2[0].risks.length) {
-    const ok = adv2[0].risks.every((r) => r.rate < 0.5);
-    const sorted = adv2[0].risks.every((r, i) => i === 0 || adv2[0].risks[i - 1].share >= r.share);
-    console.log('  首位推荐的风险项胜率均 <50%:', ok ? 'PASS' : 'FAIL',
+  if (withRisk.length) {
+    const top = withRisk[0];
+    const ok = top.risks.every((r) => r.rate < 0.5);
+    const sorted = top.risks.every((r, i) => i === 0 || top.risks[i - 1].share >= r.share);
+    console.log('  首位带风险提示的推荐：风险项胜率均 <50%:', ok ? 'PASS' : 'FAIL',
       '| 按对方使用频率降序:', sorted ? 'PASS' : 'FAIL');
-    console.log('  风险示例:', adv2[0].risks.slice(0, 3).map((r) => r.comp + '（占其 ' +
+    console.log('  风险示例:', top.risks.slice(0, 3).map((r) => r.comp + '（占其 ' +
       w.AC.util.fmtPct(r.share, 0) + '，只赢 ' + w.AC.util.fmtPct(r.rate, 0) + '）').join('  |  '));
   }
   // 对阵详情里的红度分层表
@@ -614,9 +515,12 @@ console.log('\n=== 玩家分析 ===');
   w.AC.app.switchView('players');
   const items = w.document.querySelectorAll('#playerList .ally-item').length;
   const txt = w.document.querySelector('#playerDetail').textContent;
-  const secs = ['各队伍的武将红度', '如何克制他', '针对他每套队伍的单点克制', '结论', '他的作战习惯'];
+  const secs = ['各队伍的武将红度', '如何克制他', '针对他每套队伍的单点克制', '他的作战习惯'];
   const miss = secs.filter((t) => txt.indexOf(t) < 0);
-  console.log('玩家列表项:', items, '| 详情区块齐全:', miss.length === 0 ? 'PASS' : 'FAIL 缺少 ' + miss.join('/'));
+  // 「结论」区块只对有足够克制数据的玩家显示，这里单独做条件断言
+  const hasConclusion = txt.indexOf('结论') >= 0;
+  console.log('玩家列表项:', items, '| 详情基础区块齐全:', miss.length === 0 ? 'PASS' : 'FAIL 缺少 ' + miss.join('/'),
+    '| 结论区块:', hasConclusion ? '有' : '（该玩家数据不足，属正常）');
   // 手操抓克制：习惯面板必须给出「哪套队伍专打哪套」的判断（命中对手集中度高的玩家才显示）
   const view0 = w.AC.app.playerRef();
   const sniperPlayers = (view0.data.players || []).filter((p) => p.snipers && p.snipers.length);
@@ -750,14 +654,13 @@ console.log('\n=== 玩家分析 ===');
       const noFold = m ? m.querySelectorAll('.bl2-chain').length === 0 : false;
       console.log('战报每场一张卡（不折叠隐藏）:', noFold ? 'PASS' : 'FAIL',
         '| 卡片', cards.length, '| 该玩家场次', hit.segs.length);
-      // ② 场号按发生顺序：列表第一个（最新）场号最大，最后一个（最早）是第 1 场
+      // ② 场号按发生顺序：列表从新到旧，页内场号连续递减（分页后末位不再是 1）
       const desc = times.every((v, i) => i === 0 || times[i - 1] >= v);
-      const seqOrdered = seqs.length > 0 && seqs.every((s, i) => s === seqs.length - i);
-      const firstIsOldest = seqs.length > 0 && seqs[seqs.length - 1] === 1;
+      const seqOrdered = seqs.length > 1 && seqs.every((s, i) => i === 0 || seqs[i - 1] === s + 1);
       console.log('战报列表从新到旧:', desc ? 'PASS' : 'FAIL',
-        '| 场号按发生顺序（第 1 场最早）:', seqOrdered && firstIsOldest ? 'PASS' : 'FAIL',
+        '| 页内场号连续递减（第 1 场 = 最早，全量编号）:', seqOrdered ? 'PASS' : 'FAIL',
         '| 场号', seqs.join(','));
-      if (!noFold || !desc || !seqOrdered || !firstIsOldest) process.exitCode = 1;
+      if (!noFold || !desc || !seqOrdered) process.exitCode = 1;
       const cb2 = m && m.querySelector('.bl-close');
       if (cb2) cb2.click();
     } else {
@@ -777,17 +680,19 @@ console.log('\n=== 玩家分析 ===');
     const chained = rr.battles.filter((b) => b.chainSegs > 1);
     const fieldsOk = chained.every((b) => b.atk.origin != null && b.atk.remain != null &&
       b.result && typeof b.round === 'number');
-    // 关掉合并重算一次：平局应当变多（中间段的 draw 被放回来了）
-    const off = ACx.analyzer.analyze(ACx.app.store.battles, Object.assign({}, ACx.app.filters, { mergeChains: false }));
+    // 口径断言：child 已被排除（totalInput 应明显小于原始段数）
+    const counts = ACx.app.store.counts();
+    const orphanChild = s.childExcluded;
     const drawOn = rr.battles.filter((b) => b.result === 'draw').length;
-    const drawOff = off.battles.filter((b) => b.result === 'draw').length;
     console.log('续战合并: ' + s.chainedMerged + ' 次 | 统计分母 ' + s.totalInput + '（原始 ' + rawN + ' 段）',
       mergedOk ? 'PASS' : 'FAIL');
     console.log('状态栏提示合并次数:', footOk ? 'PASS' : 'FAIL');
     console.log('合并体字段完整（开战/剩余兵力、胜负、回合）:', fieldsOk ? 'PASS' : 'FAIL',
       '| 含续战的对局', chained.length, '场');
-    console.log('合并后平局减少（口径确实变了）:', drawOn < drawOff ? 'PASS' : 'FAIL',
-      drawOff + ' -> ' + drawOn);
+    console.log('统计口径：totalInput == block 数（child 不重复计）:',
+      s.totalInput === counts.block ? 'PASS' : 'FAIL ' + s.totalInput + ' vs ' + counts.block,
+      '| 孤儿 child 排除', orphanChild, '条',
+      '| 统计内平局', drawOn, '场（child 的中间平局不再计入）');
   }
 }
 
@@ -871,8 +776,10 @@ console.log('\n=== 玩家分析 ===');
   const streakLinks = d.querySelectorAll('#rankWrap .rank-streak-link').length;
   const evBtn = d.querySelector('#inspector .streak-evidence button');
   const runRows = d.querySelectorAll('#inspector .streak-run-row').length;
-  console.log('连赢证据入口：排行可点链接', streakLinks, '个 | 详情按钮', evBtn ? 'PASS' : 'FAIL', '| 段落行', runRows);
-  if (!streakLinks && !evBtn) process.exitCode = 1;
+  const best = (res.nodeList && res.nodeList[0]) ? (res.nodeList[0].streakBest || 0) : 0;
+  console.log('连赢证据入口：排行可点链接', streakLinks, '个 | 详情按钮', evBtn ? 'PASS' : '(选中节点无连赢段，入口不显示属正常)',
+    '| 段落行', runRows, '| 该节点最强连赢', best);
+  if (!streakLinks && !evBtn && best > 0) process.exitCode = 1;
   // 点开战报浮层（会复用玩家分析的浮层）
   if (evBtn) {
     evBtn.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));

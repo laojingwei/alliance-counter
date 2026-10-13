@@ -752,7 +752,7 @@ window.AC = window.AC || {};
       this.detailHost.innerHTML = '';
       this.detailHost.appendChild(U.el('div', { class: 'empty-state', style: { position: 'static', padding: '60px 0' } }, [
         U.el('h3', { text: '没有可分析的同盟数据' }),
-        U.el('p', { text: '检查一下样本过滤条件，或先导入战报表。' })
+        U.el('p', { text: '检查一下样本过滤条件，或确认已载入战报数据。' })
       ]));
       return;
     }
@@ -787,6 +787,8 @@ window.AC = window.AC || {};
     });
     const ally = this.alliances.find(function (a) { return a.name === name; });
     if (ally) this.renderDetail(ally, this.result);
+    // 切换同盟后详情区从头看
+    U.scrollTopAll(this.detailHost);
     if (this.cb.onSelect) this.cb.onSelect(ally);
   };
 

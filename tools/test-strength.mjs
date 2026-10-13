@@ -4,7 +4,7 @@
      断言广度计入强度分后宽的那支排前面
    - 合成数据：底分为负的弱队不会因为「打得多 / 打得杂」被抬起来
    - 真实样本（可选）：跑一遍，检查强度分口径自洽、无 NaN
-   用法：node tools/test-strength.mjs [样本CSV]
+   用法：node tools/test-strength.mjs [battle-data.js路径]（默认 js/battle-data.js）
    ============================================================ */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -17,7 +17,7 @@ const root = path.join(here, '..');
 const sandbox = { window: {}, console, TextDecoder, performance: { now: () => Date.now() } };
 sandbox.globalThis = sandbox;
 vm.createContext(sandbox);
-for (const f of ['js/util.js', 'js/csv.js', 'js/model.js', 'js/detail.js', 'js/analyzer.js']) {
+for (const f of ['js/util.js', 'js/model.js', 'js/sanmou-source.js', 'js/store.js', 'js/analyzer.js']) {
   vm.runInContext(fs.readFileSync(path.join(root, f), 'utf8'), sandbox, { filename: f });
 }
 const AC = sandbox.window.AC;
@@ -256,17 +256,15 @@ console.log('\n=== 3. 综合强度分口径自洽 ===');
 }
 
 /* ---------------- 真实样本回归（可选） ---------------- */
-const csv = process.argv[2];
-if (csv) {
+const csv = process.argv[2] || 'js/battle-data.js';
+{
   const file = path.isAbsolute(csv) ? csv : path.join(root, csv);
   if (!fs.existsSync(file)) {
-    console.log('\n样本不存在，跳过真实数据回归：' + file);
+    console.log('\n数据文件不存在，跳过真实数据回归：' + file);
   } else {
     console.log('\n=== 4. 真实样本回归：' + path.basename(file) + ' ===');
-    const text = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '');
-    const battles = AC.detail.sniff(text)
-      ? AC.detail.parse(text).battles
-      : AC.csv.parseTable(text).rows.map((r) => AC.model.toBattle(r)).filter(Boolean);
+    vm.runInContext(fs.readFileSync(file, 'utf8'), sandbox, { filename: file });
+    const battles = AC.sanmou.toBattles();
     const res = AC.analyzer.analyze(battles, {
       dimension: 'comp', minPair: 2, minAppear: 3, minLevel: 40,
       onlyFull: true, onlyForceParity: false, onlyRedParity: true, redParityGap: 1

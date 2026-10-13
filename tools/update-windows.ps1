@@ -8,7 +8,7 @@
 #
 #  安全措施：
 #    · 更新前把整个目录备份到旁边的 alliance-counter-backup-<时间>
-#    · 保留 samples/ 目录（里面的示例 CSV 不动）
+#    · （历史说明已废弃：samples/ 已移除）
 #    · 保留你在 index.html 里填的 data-repo 配置
 # ============================================================
 
@@ -111,9 +111,9 @@ try {
   # 3.2 记录当前配置，覆盖后要写回去
   $keepRepo = $repo
 
-  # 3.3 覆盖：整目录同步，但排除 samples 与 .git
+  # 3.3 覆盖：整目录同步，但排除 .git
   Say '正在覆盖文件 ...'
-  $null = robocopy $srcDir.FullName $root /E /XD samples .git /NFL /NDL /NJH /NJS /NP
+  $null = robocopy $srcDir.FullName $root /E /XD .git /NFL /NDL /NJH /NJS /NP
   $rc = $LASTEXITCODE
   if ($rc -ge 8) { throw "robocopy 失败，退出码 $rc" }
   Say '✔ 文件覆盖完成' 'Green'

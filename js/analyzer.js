@@ -22,8 +22,7 @@ window.AC = window.AC || {};
     excludeDraw: false,     // 平局是否退出胜率分母
     strongOnly: false,      // 只保留强克制
     shrinkK: 3,             // 收缩强度：越大越保守
-    mergeChains: true,      // 打平续战的多段先合并为「一次完整战斗」再统计（明细仍保留每段）
-    /* ---- 培养度控制：只有明细数据带红度/品级，宽表会自动跳过 ---- */
+    /* ---- 培养度控制：数据来自 Sanmou 明细，天然带红度/品级 ---- */
     onlyRedParity: false,   // 只统计双方平均红度接近的对局
     redParityGap: 1,        // 「接近」的阈值
     minRedAvg: 0,           // 双方平均红度下限（0 = 不限）
@@ -33,13 +32,12 @@ window.AC = window.AC || {};
     redTier: 'all',         // all | low | mid | high（按对局双方的平均红度）
     pinTier: 'all',         // all | low | mid | high（按双方的平均品级）
     /* ---- 强度分：五维加权（打击面 / 胜率 / 连胜 / 战损 / 劣势）---- */
-    breadthCoef: 0.10,      // 兼容旧字段：打赢面打满时的加成（新口径下仅用于 strengthBonus 展示）
+    breadthCoef: 0.10,      // 打赢面打满时的加成（用于 strengthBonus 展示）
     breadthTau: 3,          // 打赢面收缩强度：出场场次少时，有效打赢数向「只赢过 1 支」回落
     winSpanMinN: 3,         // 「打赢过某支队伍」的交手场次门槛：不到 3 场不认（和全局收缩口径一致）
     wuxunRef: 4200,         // 连胜成色的满分线：实测连赢段平均单场武勋 p50≈3650、p90≈4120，所以取 4200 当满分
     wuxunHigh: 3600,        // 「高质量连赢」门槛：落在实测分布的 p50 附近，一半左右的段算达标
     wuxunLow: 2500,         // 成色下限：低于它的连赢基本是打残兵/低等级，只给 0~30 分成色
-    runGapMs: 15 * 60 * 1000, // 保留字段（新口径已不用时间判定，仅作兼容）
     runLinkTol: 200,        // 兵力衔接容差（绝对值）：这一场开战兵力 ≈ 上一场剩余兵力
     runLinkRate: 0.01,      // 兵力衔接容差（比例）：大兵力时用比例放宽
     spanRef: 6,             // 打击面满分参照：合成量（种类数 + 0.35×加权优势）到 6 记满分
@@ -161,9 +159,8 @@ function markRuns(battles, opts) {
 
   const byUnit = new Map();      // 「玩家|阵容键」-> 该部队的交战记录
   battles.forEach(function (b) {
-    // 实战数据里一场交战会被拆成 block（主战报）+ 若干 child（续战段）：
-    // block 的胜负已经含了 child 的最终结果，所以连胜只认 block，否则同一场交战会被拆成好几段"胜利"
-    // （实测不区分时，最高连赢会从 3 场吹到 48 场）。旧版数据没有记录类型，此时每条记录本身就是一场。
+    // 输入已按「一次交战一场」过滤（见 analyze 里的 statSrc），这里直接使用。
+    // 防御：万一上游传了未过滤的数据，child（同一场交战的续战段）跳过。
     if (b.recordType === 'child') return;
     ['atk', 'def'].forEach(function (role) {
       const side = b[role];
@@ -197,7 +194,12 @@ function markRuns(battles, opts) {
   const expectedOrigin = function (a) { return (a.remain || 0) + (a.wounded || 0); };
   const linked = function (a, b) {
     if (a.remain === null || b.origin === null) return false;
-    if (b.ts < a.ts) return false;                        // 时间必须顺
+    // 时间必须**严格**往后：同秒的记录是并发（团战里的多支部队、block+child 同秒落盘），
+    // 不是「上一场打完接着打下一场」。
+    // 这里曾经写成 b.ts < a.ts 才拒绝（同秒放行），结果两条同秒且兵力恰好衔接的记录
+    // 会互相声明 next/prev 形成环，后面 while (head.prev) 沿环走就死循环——
+    // 实测 10k 场数据在 n≈2000 的切片上触发页面假死。必须严格递增。
+    if (b.ts <= a.ts) return false;
     const exp = expectedOrigin(a);
     return Math.abs(b.origin - exp) <= Math.max(tol, exp * tolRate);
   };
@@ -260,10 +262,12 @@ function markRuns(battles, opts) {
     arr.forEach(function (a) {
       if (!a.next && !a.prev) { a.itemsInRun = [a]; return; }
       let head = a;
-      while (head.prev) head = head.prev;
+      let guard = 0;                       // 防御：链上理论无环，保险起见限步数
+      while (head.prev && guard++ < arr.length) head = head.prev;
       const items = [];
       let p = head;
-      while (p) { p.itemsInRun = items; items.push(p); p = p.next; }
+      guard = 0;
+      while (p && guard++ <= arr.length) { p.itemsInRun = items; items.push(p); p = p.next; }
     });
 
     // 顺着 next 走：一次出战 = 一条兵力衔接链。
@@ -274,7 +278,8 @@ function markRuns(battles, opts) {
       if (a.handled) return;
       let run = { n: 0 }, seq = null;
       let cur = a;
-      while (cur) {
+      let guard = 0;                       // 防御：同上，限步数防环
+      while (cur && guard++ <= arr.length) {
         if (!cur.handled) {
           cur.handled = true;
           run.n++;
@@ -536,29 +541,32 @@ function strengthOf(node) {
     const opts = normalizeOpts(options);
     const dim = opts.dimension;
 
-    /* 打平续战的多段先合并为「一次完整战斗」：
-       否则中间的平局段会被当成独立对局，平局与场次双双虚高（实测 demo 数据虚增 36 场平局）。
-       合并不改动原对象，明细展示（战报浮层）仍按段呈现并折叠。 */
-    const mergedRes = opts.mergeChains
-      ? M.mergeChains(battles)
-      : { list: battles, merged: 0, rawSegs: battles.length };
+    /* ---------------------------------------------------------------
+       【统计口径】一次出战 = 1 场
+       Sanmou 的战报结构（viewer 导出时已按 battleId 去重）：
+         block —— 主战报（该次交战的最终结果）
+         child —— 同一次交战内的续战段 / 团战分战报
+       处理分两步：
+         ① mergeChains：按「同一对玩家 + 同一地点 + 兵力衔接」把多段
+            （block 与其后续 child）合成一条 —— 伤亡/回合/武勋累计，胜负取末段。
+            实测 10,054 条 → 9,215 条（合并 658 条多段链）。
+         ② 过滤剩余 child：没被任何链认领的 child（来源不全或兵力对不上），
+            不作为独立交战计入统计。实测再排除 4,369 条 → 4,846 场。
+       明细展示（战报浮层）仍保留原始每段，通过 childIds 关联。
+       --------------------------------------------------------------- */
+    const mergedRes = M.mergeChains(battles);
     const src = mergedRes.list;
+    const statSrc = src.filter(function (b) { return b.recordType !== 'child'; });
 
-    /* 连赢段：战报没有「连战场次」列，只能按「同玩家 15 分钟内连续交战」还原一次出战、
-       再取出其中连续胜利的段（详见 markRuns）。段信息挂到战斗上，供节点统计。 */
-    const runStats = markRuns(src, opts);
+    /* 连赢段：按「同玩家 + 部队」还原一次出战，再取出其中连续胜利的段（详见 markRuns）。 */
+    const runStats = markRuns(statSrc, opts);
 
     const kept = [];
-    /* 连胜原料：**全量交战**（不受样本过滤影响）。
-       用筛后数据算连赢会把「胜-败-胜」误算成三连——被过滤掉的败局同样是败局，必须断连。
-       注意：child（续战段）也要收进来——它虽然不是独立一场交战，但**它的失败同样是失败**，
-       漏掉就会出现「胜-败-胜 被连成 2 连」（实测踩过：清絮 12:55:01 胜 → 12:55:38 全灭 → 14:26 胜）。
-       计数时只认 block（避免同一场交战被算两次），断连时 block / child 一视同仁。 */
+    /* 连胜原料：与统计同源（statSrc）。败局必须参与断连判定。 */
     const runItemsByComp = new Map();
-    src.forEach(function (bx) {
-      const isBlock = bx.recordType !== 'child';
+    statSrc.forEach(function (bx) {
       [['atk', 'def'], ['def', 'atk']].forEach(function (pair) {
-        const role = pair[0], side = bx[role], foe = bx[pair[1]];
+        const role = pair[0], side = bx[role];
         if (!side || !side.player || !side.key) return;
         let arr = runItemsByComp.get(side.key);
         if (!arr) { arr = []; runItemsByComp.set(side.key, arr); }
@@ -568,8 +576,7 @@ function strengthOf(node) {
           wounded: side.wounded || 0,          // 连战判定要用：下一场开战 = 本场剩余 + 本场伤兵
           won: bx.result === 'draw' ? null : (bx.result === role),
           noLoss: ((side.origin || 0) - (side.remain || 0)) <= 0,
-          wuxun: side.wuxun || 0,
-          isBlock: isBlock
+          wuxun: side.wuxun || 0
         });
       });
     });
@@ -578,7 +585,7 @@ function strengthOf(node) {
     /* 数据里到底有没有武勋：旧版导出（以及部分脚本生成的表）没有这一列。
        没有武勋时绝不能把「武勋 0」当成打空城，否则所有连胜都会被判成垃圾场次而清零。 */
     let wuxunTotal = 0, wuxunPos = 0;
-    src.forEach(function (bx) {
+    statSrc.forEach(function (bx) {
       [bx.atk, bx.def].forEach(function (s) {
         if (!s || !s.player) return;
         wuxunTotal++;
@@ -600,8 +607,8 @@ function strengthOf(node) {
       return node;
     }
 
-    for (let i = 0; i < src.length; i++) {
-      const b = src[i];
+    for (let i = 0; i < statSrc.length; i++) {
+      const b = statSrc[i];
       if (b.result === 'unknown') { skipped++; continue; }
 
       const atkKey = M.groupKey(b, 'atk', dim);
@@ -935,18 +942,16 @@ function strengthOf(node) {
             it.ts > last.ts && Math.abs(it.origin - expOrigin) <= Math.max(runTol, expOrigin * runTolRate);
           if (!linked) closeStreak();          // 兵力接不上：这一波结束
           if (it.won === true) {
-            // 只有 block（一场真实交战的最终结果）才计数；
-            // child 是同一次交战的续战段，赢了不重复计，但**输了照样断连**（见下）
-            if (it.isBlock) {
-              seq++;                           // 赢一场：连赢 +1
-              seqWuxun += it.wuxun || 0;
-              seqWuxunN++;
-              curRun.push(it);                 // 记下这一场的战斗编号，详情页可点开看战报
-              if (seq > bestStreak) bestStreak = seq;
-            }
+            // 统计原料（statSrc）已经只含 block（一次真实交战一场），
+            // 所以这里每条记录都计数，无需再区分 recordType。
+            seq++;                             // 赢一场：连赢 +1
+            seqWuxun += it.wuxun || 0;
+            seqWuxunN++;
+            curRun.push(it);                   // 记下这一场的战斗编号，详情页可点开看战报
+            if (seq > bestStreak) bestStreak = seq;
             last = it;                         // 赢下来的这一场，剩余兵力才作数
           } else {
-            closeStreak();                     // 输 / 平：连赢立刻断（child 的失败同样是失败）
+            closeStreak();                     // 输 / 平：连赢立刻断
             last = null;
           }
         });
@@ -1059,9 +1064,10 @@ function strengthOf(node) {
       .sort(function (a, b) { return b.n - a.n || b.rate - a.rate; });
 
     const stats = {
-      totalInput: src.length,          // 合并续战后的总数：与 totalKept 同口径
+      totalInput: statSrc.length,      // 参与统计的场次（默认只含 block）：与 totalKept 同口径
       rawInput: mergedRes.rawSegs,     // 导入的原始段数
       chainedMerged: mergedRes.merged, // 合并掉的续战链数
+      childExcluded: src.length - statSrc.length,  // 被排除的续战段数
       totalKept: kept.length,
       skipped: skipped,
       skippedMirror: skippedMirror,

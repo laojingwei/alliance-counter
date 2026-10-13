@@ -779,6 +779,8 @@ window.AC = window.AC || {};
     });
     const g = this.groups.filter(function (x) { return x.key === key; })[0];
     if (g) this.renderDetail(g);
+    // 切换阵容后详情区从头看
+    U.scrollTopAll(this.detailHost);
   };
 
   MirrorView.prototype.renderDetail = function (g) {

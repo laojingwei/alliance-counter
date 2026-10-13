@@ -265,48 +265,76 @@ window.AC = window.AC || {};
     });
 
     bindUI();
-    renderBatches();
+    renderDataSource();
     recompute(true);
 
-    // 默认展示内置数据；?restore=1 时改为载入上次存档。
-    // 载入内置前先把上次存档挪到备份键，避免覆盖用户的数据。
     const params = new URLSearchParams(location.search);
-    if (params.get('demo') === '1') {
-      /* ?demo=1 才自动载入内置示例。示例是 12MB 的 sample-data.js，改为**动态拉取**：
-         以前它在 index.html 里同步加载，首屏要先下完这 12MB 才能跑起来，
-         在 GitHub Pages 这类慢网络上要几十秒，启动遮罩根本等不到，
-         用户就看到了「还没有数据」的空页面。 */
-      loadSampleData(function () {
-        if (AC.sampleCsv) {
-          store.stash();
-          ingest(AC.sampleCsv, '示例战报表（内置）', true);
-        }
-        bootFinish();
-      });
-      return;
-    }
-    if (params.get('restore') === '1') {
-      Promise.resolve(store.restorePrev()).then(function (r) {
-        if (r && r.ok) {
-          renderBatches();
+
+    // 备份内置数据引用：上传会覆盖 AC.battleData，「移除上传」时要还原
+    window.__builtinBattleData = AC.battleData || null;
+
+    /* 数据加载策略（优先级从高到低）：
+       ① 用户上传的数据（IndexedDB 持久化，页面拖入/选择后保存）
+       ② 内置数据文件 js/battle-data.js（window.AC.battleData）
+       ③ 缓存的转换结果（来自①或②的某个历史版本）
+       ④ 都没有就提示用户上传或去 sanmou-viewer 导出 */
+    function bootFromUpload(res) {
+      // 恢复上传数据到 battleData 再统一装载
+      AC.battleData = res.data;
+      setBusy('正在读取上传的战报数据…', '');
+      nextPaint(function () {
+        try {
+          const r = store.loadFromBattleData({ uploaded: true });
+          renderDataSource();
           recompute(true);
-          U.toast('已载入上次的数据：' + r.n + ' 场 / ' + r.batches + ' 份表。');
-        } else {
-          U.toast('没有找到上次的数据。', 'warn');
+          store.save();
+          U.toast('已载入 <b>' + r.count + '</b> 场战报（上传数据，'
+            + new Date(res.savedAt).toLocaleString('zh-CN') + ' 导入）', 'ok', 5200);
+        } catch (e) {
+          U.toast('载入上传数据失败：' + e.message, 'err', 6000);
+        } finally {
+          hideBusy();
+          bootFinish();
+        }
+      });
+    }
+
+    Promise.resolve(store.loadUploaded()).then(function (up) {
+      if (up && up.ok) { bootFromUpload(up); return; }
+
+      // 无上传数据：看内置文件
+      const diag = AC.sanmou.diagnose();
+      if (diag.ok) {
+        setBusy('正在读取战报数据…', '数据量较大时会短暂无响应');
+        nextPaint(function () {
+          try {
+            const res = store.loadFromBattleData();
+            renderDataSource();
+            recompute(true);
+            store.save();                      // 后台缓存，下次秒开
+            U.toast('已载入 <b>' + res.count + '</b> 场战报（完整交战 '
+              + (res.meta && res.meta.blocks ? res.meta.blocks : '-') + ' 场）', 'ok', 4600);
+          } catch (e) {
+            U.toast('载入战报数据失败：' + e.message, 'err', 6000);
+          } finally {
+            hideBusy();
+            bootFinish();
+          }
+        });
+        return;
+      }
+
+      // 无内置文件：尝试缓存
+      Promise.resolve(store.loadCache()).then(function (r) {
+        if (r && r.ok) {
+          renderDataSource();
+          recompute(true);
+          U.toast('已从缓存载入 ' + r.count + ' 场战报（未检测到数据文件）。', '', 4200);
+        } else if (diag.reason !== 'missing') {
+          U.toast(diag.message, 'err', 8000);
         }
         bootFinish();
       });
-      return;
-    }
-    /* 默认路径：自动恢复上次的存档（IndexedDB 优先，回退 localStorage）。
-       以前刷新后什么都不恢复，用户每次都得重新导入——那正是「本地存储写入失败」的连带体验问题。 */
-    Promise.resolve(store.load()).then(function () {
-      if (store.battles.length) {
-        renderBatches();
-        recompute(true);
-        U.toast('已自动载入上次的数据：' + store.battles.length + ' 场 / ' + store.batches.length + ' 份表。', 'ok', 4200);
-      }
-      bootFinish();
     });
     return;
 
@@ -320,7 +348,8 @@ window.AC = window.AC || {};
       }
       if (!store.battles.length) {
         $('#graphEmpty').style.display = 'flex';
-        U.toast('还没有数据。拖入战报 CSV，或点击「载入示例表」快速体验动画效果。', '', 5200);
+        const d = AC.sanmou.diagnose();
+        U.toast(d.message, 'err', 9000);
       }
       // 首屏数据就绪：撤掉 index.html 里的启动加载提示
       if (window.__bootReady) window.__bootReady();
@@ -358,63 +387,149 @@ window.AC = window.AC || {};
     requestAnimationFrame(function () { setTimeout(fn, 24); });
   }
 
-  /** 按需拉取内置示例数据（12MB）：首屏不加载，点「载入示例表」或 ?demo=1 时才拉 */
-  function loadSampleData(cb) {
-    if (AC.sampleCsv) { cb(); return; }
-    showBusy('正在下载示例数据…', '约 12MB，网络较慢时需要等一会儿——请不要刷新页面');
-    nextPaint(function () {
-      const s = document.createElement('script');
-      s.src = 'js/sample-data.js?v=' + (AC.version || Date.now());
-      s.onload = function () {
-        // 下载完紧接着是同步解析，先把文案换掉再让它去占主线程
-        setBusy('正在解析示例数据…', '数据量较大，这一小会儿页面会没响应，属正常现象');
-        nextPaint(function () {
-          cb();
-          hideBusy();
-        });
-      };
-      s.onerror = function () {
-        hideBusy();
-        U.toast('示例数据加载失败——可能是网络问题，请重试或改用自己的战报 CSV。', 'err', 6000);
-        cb();
-      };
-      document.head.appendChild(s);
-    });
-  }
-
   /* ================= UI 绑定 ================= */
 
   function bindUI() {
-    // 文件选择
-    $('#btnImport').addEventListener('click', function () { $('#fileInput').click(); });
-    $('#dropzone').addEventListener('click', function () { $('#fileInput').click(); });
-    $('#fileInput').addEventListener('change', function (ev) {
-      if (ev.target.files && ev.target.files.length) importFiles(ev.target.files);
-      ev.target.value = '';
+    // 数据源面板：重新载入 / 清空
+    const btnReload = $('#btnReloadData');
+    if (btnReload) {
+      btnReload.addEventListener('click', function () {
+        const diag = AC.sanmou.diagnose();
+        if (!diag.ok) { U.toast(diag.message, 'err', 8000); return; }
+        showBusy('正在重新载入战报数据…', '');
+        nextPaint(function () {
+          try {
+            const res = store.loadFromBattleData();
+            renderDataSource();
+            clearSelection();
+            recompute(true);
+            store.save();
+            U.toast('已重新载入 <b>' + res.count + '</b> 场战报。', 'ok', 4000);
+          } catch (e) {
+            U.toast('载入失败：' + e.message, 'err', 6000);
+          } finally {
+            hideBusy();
+          }
+        });
+      });
+    }
+
+    /* ---------------- 上传 / 拖入数据文件 ----------------
+       支持 sanmou-viewer 导出的 .js / .json / .jsonl。
+       解析成功后保存到 IndexedDB，优先级高于内置数据文件。 */
+    function handleUploadedFile(file) {
+      if (!/\.(js|json|jsonl)$/i.test(file.name)) {
+        U.toast('不支持的文件类型：<b>' + U.esc(file.name) + '</b>。请拖入 sanmou-viewer 导出的 .js / .json / .jsonl 文件。', 'err', 7000);
+        return;
+      }
+      showBusy('正在读取 ' + U.esc(file.name) + ' …', '文件较大时会短暂无响应');
+      const reader = new FileReader();
+      reader.onload = function () {
+        nextPaint(function () {
+          try {
+            const res = AC.sanmou.parseUploaded(String(reader.result), file.name);
+            if (!res.ok) { U.toast(res.message, 'err', 8000); return; }
+            const r = store.loadFromBattleData({ uploaded: true });
+            store.saveUploaded(AC.battleData);   // 持久化：刷新后仍生效
+            renderDataSource();
+            clearSelection();
+            recompute(true);
+            store.save();
+            const st = store.meta || {};
+            U.toast('已载入上传数据 <b>' + r.count + '</b> 场战报'
+              + (st.blocks ? '（完整交战 ' + st.blocks + ' 场）' : '')
+              + '，刷新后仍生效。', 'ok', 6000);
+          } catch (e) {
+            U.toast('载入上传文件失败：' + e.message, 'err', 8000);
+          } finally {
+            hideBusy();
+          }
+        });
+      };
+      reader.onerror = function () {
+        hideBusy();
+        U.toast('读取文件失败。', 'err');
+      };
+      reader.readAsText(file, 'utf-8');
+    }
+
+    const uploadZone = $('#uploadZone');
+    const uploadInput = $('#uploadInput');
+    if (uploadZone && uploadInput) {
+      uploadZone.addEventListener('click', function () { uploadInput.click(); });
+      uploadInput.addEventListener('change', function (ev) {
+        if (ev.target.files && ev.target.files.length) handleUploadedFile(ev.target.files[0]);
+        ev.target.value = '';
+      });
+      // 拖拽高亮
+      ['dragenter', 'dragover'].forEach(function (t) {
+        uploadZone.addEventListener(t, function (ev) {
+          ev.preventDefault();
+          uploadZone.classList.add('over');
+        });
+      });
+      ['dragleave', 'drop'].forEach(function (t) {
+        uploadZone.addEventListener(t, function (ev) {
+          ev.preventDefault();
+          uploadZone.classList.remove('over');
+        });
+      });
+      uploadZone.addEventListener('drop', function (ev) {
+        ev.stopPropagation();
+        if (ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files.length) {
+          handleUploadedFile(ev.dataTransfer.files[0]);
+        }
+      });
+    }
+
+    // 全局拖拽也接住（不用精确瞄准小框）
+    window.addEventListener('dragover', function (ev) { ev.preventDefault(); });
+    window.addEventListener('drop', function (ev) {
+      ev.preventDefault();
+      if (ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files.length) {
+        handleUploadedFile(ev.dataTransfer.files[0]);
+      }
     });
 
-    // 全局拖拽
-    let dragDepth = 0;
-    window.addEventListener('dragenter', function (ev) {
-      if (!hasFiles(ev)) return;
-      dragDepth++;
-      $('#globalDrop').classList.add('show');
-    });
-    window.addEventListener('dragover', function (ev) { if (hasFiles(ev)) ev.preventDefault(); });
-    window.addEventListener('dragleave', function () {
-      dragDepth = Math.max(0, dragDepth - 1);
-      if (!dragDepth) $('#globalDrop').classList.remove('show');
-    });
-    window.addEventListener('drop', function (ev) {
-      if (!hasFiles(ev)) return;
-      ev.preventDefault();
-      dragDepth = 0;
-      $('#globalDrop').classList.remove('show');
-      const files = Array.prototype.filter.call(ev.dataTransfer.files, function (f) { return !/\.json$/i.test(f.name); });
-      const jsons = Array.prototype.filter.call(ev.dataTransfer.files, function (f) { return /\.json$/i.test(f.name); });
-      if (files.length) importFiles(files);
-      if (jsons.length) importJsonFiles(jsons);
-    });
+    // 移除上传数据：回到内置数据文件
+    const btnClearUp = $('#btnClearUpload');
+    if (btnClearUp) {
+      btnClearUp.addEventListener('click', function () {
+        if (!window.confirm('移除上传的数据，回到内置数据文件？')) return;
+        Promise.resolve(store.clearUploaded()).then(function () {
+          // 关键：上传时 parseUploaded 会覆盖 AC.battleData，
+          // 必须先把内置数据还原回去，否则"回到内置"还是载到上传那份。
+          const builtin = window.__builtinBattleData;
+          if (builtin) {
+            AC.battleData = builtin;
+            showBusy('正在载入内置数据…', '');
+            nextPaint(function () {
+              try {
+                const res = store.loadFromBattleData();
+                renderDataSource();
+                clearSelection();
+                recompute(true);
+                store.save();
+                U.toast('已回到内置数据：<b>' + res.count + '</b> 场战报。', 'ok', 4200);
+              } catch (e) {
+                U.toast('载入失败：' + e.message, 'err', 6000);
+              } finally {
+                hideBusy();
+              }
+            });
+          } else {
+            // 页面本身没有内置数据文件
+            delete AC.battleData;
+            store.clear();
+            store.clearUploaded();
+            renderDataSource();
+            clearSelection();
+            recompute(true);
+            U.toast('已移除上传数据。当前没有内置数据文件。', '', 5200);
+          }
+        });
+      });
+    }
 
     // 维度切换
     $$('#dimSeg .seg-btn').forEach(function (btn) {
@@ -469,60 +584,21 @@ window.AC = window.AC || {};
     $('#btnRelayout').addEventListener('click', function () { graph.relayout(); });
 
     $('#btnExportPng').addEventListener('click', exportPng);
-    $('#btnExport').addEventListener('click', exportArchive);
-    $('#btnImportJson').addEventListener('click', function () { $('#jsonInput').click(); });
-    $('#jsonInput').addEventListener('change', function (ev) {
-      if (ev.target.files && ev.target.files.length) importJsonFiles(ev.target.files);
-      ev.target.value = '';
+    $('#btnReloadDataTop').addEventListener('click', function () {
+      const b = $('#btnReloadData');
+      if (b) b.click();
     });
 
     $('#btnClearAll').addEventListener('click', function () {
       if (!store.battles.length) { U.toast('当前没有数据。'); return; }
-      if (!window.confirm('确定清空全部累计数据？此操作不可撤销。')) return;
+      if (!window.confirm('确定清空当前载入的数据？刷新页面后可重新从数据文件载入。')) return;
       Promise.resolve(store.clear()).then(function () {
-        renderBatches();
+        renderDataSource();
         clearSelection();
         recompute(true);
-        U.toast('已清空全部数据。');
+        U.toast('已清空数据。');
       });
     });
-
-    const btnPrev = $('#btnLoadPrev');
-    if (btnPrev) {
-      btnPrev.addEventListener('click', function () {
-        Promise.resolve(store.hasPrev()).then(function (has) {
-          if (!has) { U.toast('没有找到上次的数据。', 'warn'); return null; }
-          return store.restorePrev();
-        }).then(function (r) {
-          if (!r) return;
-          if (!r.ok) { U.toast('上次的数据无法恢复。', 'err'); return; }
-          renderBatches();
-          recompute(true);
-          U.toast('已载入上次的数据：' + r.n + ' 场 / ' + r.batches + ' 份表。');
-        });
-      });
-    }
-
-    $('#btnLoadSample').addEventListener('click', function () {
-      loadSampleData(function () {
-        if (!AC.sampleCsv) { U.toast('未找到示例数据文件。', 'err'); return; }
-        ingest(AC.sampleCsv, '示例战报表（内置）');
-      });
-    });
-
-    // 生成内置数据
-    $('#btnBuildSample').addEventListener('click', function () { openGenDrawer(); });
-    $('#genClose').addEventListener('click', closeGenDrawer);
-    $('#genMask').addEventListener('click', closeGenDrawer);
-    $('#genSource').addEventListener('change', function (ev) {
-      genState.source = ev.target.value;
-      renderGenPreview();
-    });
-    ['#genAnon', '#genAnonId', '#genAnonPlace', '#genValidOnly'].forEach(function (sel) {
-      $(sel).addEventListener('change', renderGenPreview);
-    });
-    $('#genDownloadJs').addEventListener('click', downloadGenJs);
-    $('#genDownloadCsv').addEventListener('click', downloadGenCsv);
 
     // 视图切换
     $$('.tab').forEach(function (tab) {
@@ -531,13 +607,8 @@ window.AC = window.AC || {};
 
     window.addEventListener('keydown', function (ev) {
       if (ev.key !== 'Escape') return;
-      if (genState.open) { closeGenDrawer(); return; }
       clearSelection();
     });
-  }
-
-  function hasFiles(ev) {
-    return ev.dataTransfer && ev.dataTransfer.types && Array.prototype.indexOf.call(ev.dataTransfer.types, 'Files') >= 0;
   }
 
   function bindRange(sel, labelSel, key, fmt, relayout) {
@@ -626,358 +697,62 @@ window.AC = window.AC || {};
 
   const recomputeDebounced = U.debounce(function () { recompute(); }, 200);
 
-  /* ================= 数据导入 ================= */
+  /* ================= 数据源 ================= */
 
-  function decodeBuffer(buf) {
-    try {
-      return new TextDecoder('utf-8', { fatal: true }).decode(buf);
-    } catch (e) {
-      try {
-        return new TextDecoder('gb18030').decode(buf);
-      } catch (e2) {
-        return new TextDecoder('utf-8').decode(buf);
-      }
-    }
-  }
+  /** 把当前数据源状态渲染到侧边栏 */
+  function renderDataSource() {
+    const box = $('#dataSource');
+    if (!box) return;
 
-  function readFile(file) {
-    return new Promise(function (resolve, reject) {
-      const fr = new FileReader();
-      fr.onload = function () { resolve(fr.result); };
-      fr.onerror = function () { reject(new Error('读取失败：' + file.name)); };
-      fr.readAsArrayBuffer(file);
-    });
-  }
+    const diag = AC.sanmou.diagnose();
+    const counts = store.counts();
+    const meta = store.meta || {};
 
-  async function importFiles(files) {
-    let ok = 0, fail = 0;
-    for (let i = 0; i < files.length; i++) {
-      const f = files[i];
-      try {
-        showBusy('正在读取 ' + f.name + '…', '文件较大时需要几秒，请不要刷新页面');
-        await new Promise(function (r) { nextPaint(r); });
-        const buf = await readFile(f);
-        setBusy('正在解析 ' + f.name + '…', '数据量大时页面会短暂无响应，属正常现象');
-        await new Promise(function (r) { nextPaint(r); });
-        const text = decodeBuffer(buf);
-        const res = ingest(text, f.name);
-        if (res) ok++; else fail++;
-      } catch (e) {
-        fail++;
-        U.toast('导入 <b>' + f.name + '</b> 失败：' + e.message, 'err');
-      } finally {
-        hideBusy();
-      }
-    }
-    if (ok) U.toast('完成：成功 ' + ok + ' 份' + (fail ? '，失败 ' + fail + ' 份' : ''), 'ok');
-  }
-
-  /** 解析一段 CSV 文本并叠加进仓库（同时支持宽表与武将级明细表） */
-  function ingest(text, name, silent) {
-    // ---- 路径一：武将级明细表（一场战斗拆成多行）----
-    if (AC.detail && AC.detail.sniff(text)) {
-      const d = AC.detail.parse(text);
-      if (!d || !d.battles.length) {
-        if (!silent) U.toast('明细表里没有解析出完整对局（需要同时包含攻方与守方）。', 'err', 4600);
-        return null;
-      }
-      const res = store.add(d.battles, {
-        name: name, rowTotal: d.rows.length, invalid: d.rows.length - d.battles.length * 2,
-        detail: true, summary: d.summary
-      });
-      renderBatches();
-      recompute(true);
-      if (silent) return res;
-      if (!res.added) {
-        U.toast('<b>' + name + '</b>：' + res.dup + ' 场全部为重复记录，未新增。');
-        return res;
-      }
-      const s = d.summary;
-      U.toast('<b>' + name + '</b><br>明细表：新增 ' + res.added + ' 场，含 ' + s.heroRows +
-        ' 条武将记录 · ' + s.heroes + ' 名武将 · ' + s.skills + ' 种技能', 'ok', 5200);
-      return res;
-    }
-
-    // ---- 路径二：传统宽表（一场战斗一行）----
-    const parsed = AC.csv.parseTable(text);
-    if (!parsed.rows.length) {
-      if (!silent) U.toast('未从 <b>' + name + '</b> 中解析出数据行。', 'err');
-      return null;
-    }
-
-    const idx = parsed.mapping ? parsed.mapping.index : {};
-    const missing = [];
-    if (idx.atkComp === undefined && idx.atkFormation === undefined) missing.push('攻方阵容/阵型');
-    if (idx.defComp === undefined && idx.defFormation === undefined) missing.push('守方阵容/阵型');
-
-    const battles = [];
-    for (let i = 0; i < parsed.rows.length; i++) {
-      const b = AC.model.toBattle(parsed.rows[i]);
-      if (b) battles.push(b);
-    }
-    const invalid = parsed.rows.length - battles.length;
-
-    if (!battles.length) {
-      if (!silent) U.toast('文件中没有可用的战斗记录（缺少阵容或阵型列？）', 'err', 4600);
-      return null;
-    }
-
-    const res = store.add(battles, { name: name, rowTotal: parsed.rows.length, invalid: invalid });
-    renderBatches();
-    recompute(true);
-    if (silent) return res;
-
-    if (!res.added) {
-      if (!silent) U.toast('<b>' + name + '</b>：' + res.dup + ' 场全部为重复记录，未新增（已在累计数据中）。');
-      return res;
-    }
-
-    let msg = '<b>' + name + '</b><br>新增 ' + res.added + ' 场，跳过重复 ' + res.dup + ' 场';
-    if (invalid) msg += '，跳过无效行 ' + invalid;
-    if (silent) return res;
-    U.toast(msg, 'ok', 4200);
-    if (missing.length) {
-      U.toast('表头中未识别到：' + missing.join('、') + '。若数据异常请检查列名。', 'err', 5200);
-    }
-    return res;
-  }
-
-  async function importJsonFiles(files) {
-    for (let i = 0; i < files.length; i++) {
-      try {
-        const text = await files[i].text();
-        const res = store.importJSON(text);
-        renderBatches();
-        recompute(true);
-        U.toast('<b>' + files[i].name + '</b><br>恢复 ' + res.added + ' 场，跳过重复 ' + res.dup + ' 场', 'ok', 4200);
-      } catch (e) {
-        U.toast('存档恢复失败：' + e.message, 'err');
-      }
-    }
-  }
-
-  function renderBatches() {
-    const host = $('#batchList');
-    host.innerHTML = '';
-    if (!store.batches.length) return;
-
-    store.batches.slice().reverse().forEach(function (b) {
-      const item = U.el('div', { class: 'batch-item' }, [
-        U.el('span', { class: 'bi-name', title: b.name, text: b.name }),
-        U.el('span', { class: 'bi-count', text: '+' + (b.added || 0) }),
-        U.el('span', { class: 'bi-gen', title: '把这一批转换成内置示例数据', text: '⇩' }),
-        U.el('span', { class: 'bi-del', title: '移除这一批数据', text: '✕' })
-      ]);
-      item.querySelector('.bi-del').addEventListener('click', function () {
-        const removed = store.removeBatch(b.id);
-        renderBatches();
-        clearSelection();
-        recompute(true);
-        U.toast('已移除 <b>' + b.name + '</b> 的 ' + removed + ' 场记录。');
-      });
-      item.querySelector('.bi-gen').addEventListener('click', function () {
-        openGenDrawer(b.id);
-      });
-      host.appendChild(item);
-    });
-  }
-
-  /* ================= 生成内置数据 ================= */
-
-  const genState = { open: false, source: 'all', result: null };
-
-  function collectSourceBattles(value) {
-    if (!value || value === 'all') return store.battles.slice();
-    const bid = value.indexOf('batch:') === 0 ? value.slice(6) : value;
-    return store.battles.filter(function (b) { return b.batchId === bid; });
-  }
-
-  function sourceLabel(value) {
-    if (!value || value === 'all') return '全部累计数据';
-    const bid = value.indexOf('batch:') === 0 ? value.slice(6) : value;
-    const b = store.batches.find(function (x) { return x.id === bid; });
-    return b ? b.name : '未知批次';
-  }
-
-  function buildSourceOptions() {
-    const sel = $('#genSource');
-    sel.innerHTML = '';
-    sel.appendChild(U.el('option', {
-      value: 'all',
-      text: '全部累计数据（' + store.battles.length + ' 场 / ' + store.batches.length + ' 份表）'
-    }));
-    store.batches.slice().reverse().forEach(function (b) {
-      const n = store.battles.filter(function (x) { return x.batchId === b.id; }).length;
-      sel.appendChild(U.el('option', {
-        value: 'batch:' + b.id,
-        text: '仅「' + b.name + '」（' + n + ' 场）'
-      }));
-    });
-    const prefer = sel.querySelector('option[value="' + genState.source + '"]');
-    sel.value = prefer ? genState.source : 'all';
-    genState.source = sel.value;
-  }
-
-  /** 战斗记录 -> 标准列 -> 脱敏 -> CSV 文本 / sample-data.js 文本 */
-  /**
-   * 导出内置数据时用的「有效性」规则：只剔除残缺 / 异常的记录。
-   * 注意：同阵容内战**保留**——那是对局事实，也能反映镜像对拼，
-   * 是否参与分析由分析时的「排除同名阵容内战」开关决定，不在导出阶段删数据。
-   */
-  const VALID_RULES = {
-    excludeMirror: false,  // 内战保留
-    onlyFull: true,        // 人数不满 3v3 或双方人数不等：残缺记录
-    onlyForceParity: false, // 兵力差距大不算残缺记录，导出内置数据时一律保留
-    minLevel: 30,          // 单位等级低于 30：明显是异常数据（默认分析门槛是 40，这里放宽以免误删）
-    minPair: 1,
-    minAppear: 1,
-    shrinkK: 3
-  };
-
-  function computeConversion() {
-    const source = collectSourceBattles(genState.source);
-    const keepValid = !$('#genValidOnly') || $('#genValidOnly').checked;
-
-    // 只保留有效对局：剔除残缺 / 异常记录（内战保留）
-    let battles = source;
-    const dropped = { mirror: 0, sample: 0 };
-    if (keepValid) {
-      battles = source.filter(function (b) {
-        if (!AC.analyzer.pairSampleOk(b.atk, b.def, VALID_RULES)) { dropped.sample++; return false; }
-        return true;
-      });
-    }
-
-    // 明细数据要保持明细形态导出，否则武将 / 技能信息会被降级抹掉
-    const detailed = AC.detail.hasDetail(battles);
-    const header = detailed ? AC.detail.DETAIL_HEADER.slice() : AC.model.CSV_HEADER.slice();
-    const rows = detailed
-      ? AC.detail.toRows(battles)
-      : battles.map(function (b) { return AC.model.battleToRow(b); });
-
-    const opts = {
-      anonNames: $('#genAnon').checked,
-      anonId: $('#genAnonId').checked,
-      anonPlace: $('#genAnonPlace').checked
-    };
-
-    const plan = AC.anonymize.buildPlan(header, rows, {});
-    const applied = AC.anonymize.applyPlan(header, rows, plan, opts);
-    const csv = AC.anonymize.toCsvText(applied.header, applied.rows);
-    const js = buildSampleJs(csv, sourceLabel(genState.source), applied.stats, opts, {
-      detailed: detailed, battles: battles.length
-    });
-
-    genState.result = {
-      battles: battles, header: header, rows: rows,
-      applied: applied, csv: csv, js: js, plan: plan, opts: opts,
-
-      sourceCount: source.length, validOnly: keepValid, dropped: dropped
-    };
-    return genState.result;
-  }
-
-  function buildSampleJs(csvText, sourceName, stats, opts, meta) {
-    meta = meta || {};
-    const d = new Date();
-    const p = function (n) { return String(n).padStart(2, '0'); };
-    const stamp = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
-    const anonDesc = opts.anonNames
-      ? '已脱敏（假名由原始名的 MD5 派生，跨批次恒定可匹配）'
-      : '⚠ 未脱敏，含真实同盟 / 玩家名';
-    const sizeDesc = meta.detailed
-      ? (stats.rows || 0) + ' 行武将明细（' + (meta.battles || 0) + ' 场战斗）'
-      : (stats.rows || 0) + ' 场战斗';
-    const banner = [
-      '/* 内置示例战报表（由页面「生成内置数据」导出，勿手改）',
-      '   来源：' + sourceName,
-      '   生成时间：' + stamp,
-      '   数据：' + sizeDesc + ' · ' + anonDesc,
-      '   用法：覆盖到 js/sample-data.js，刷新页面即可生效；',
-      '         同时把「配套 CSV」覆盖到 samples/' + (meta.detailed ? 'alliance_detail_sample.csv' : 'alliance_battles_sample.csv') + '；',
-      '         页面左上「载入示例表」与 index.html?demo=1 都会使用它。 */',
-      'window.AC = window.AC || {};',
-      'window.AC.sampleCsv = '
-    ].join('\n');
-    return banner + JSON.stringify(csvText) + ';\n';
-  }
-
-  function renderGenPreview() {
-    const r = computeConversion();
-    const host = $('#genPreview');
-    host.innerHTML = '';
-
-    const st = r.applied.stats;
-    const lines = [
-      ['数据规模', AC.detail.hasDetail(r.battles)
-        ? (r.applied.rows.length + ' 行武将明细 / ' + r.battles.length + ' 场战斗')
-        : (r.applied.rows.length + ' 场战斗')],
-      ['有效对局', r.validOnly === false ? ('保留全部 ' + (r.sourceCount || 0) + ' 场') : ((r.sourceCount || 0) + ' 场 → 保留 ' + r.battles.length + ' 场' + (r.dropped && r.dropped.sample ? '（剔除异常 ' + r.dropped.sample + ' 场，内战保留）' : '（无可剔除）'))],
-        ['数据来源', sourceLabel(genState.source)],
-      ['不同玩家', r.plan.stats.players + ' 个'],
-      ['不同同盟', r.plan.stats.alliances + ' 个'],
-      ['脱敏替换', r.opts.anonNames
-        ? st.playerReplacements + ' 处玩家 / ' + st.allianceReplacements + ' 处同盟'
-        : '未脱敏'],
-      ['输出体积', (r.js.length / 1024).toFixed(0) + ' KB']
-    ];
-    lines.forEach(function (p) {
-      host.appendChild(U.el('div', { class: 'gp-row' }, [
-        U.el('span', { text: p[0] }),
-        U.el('b', { text: p[1] })
-      ]));
-    });
-
-    const preview = [r.applied.header.slice(0, 8).join(' | ')]
-      .concat(r.applied.rows.slice(0, 3).map(function (row) {
-        return row.slice(0, 8).map(function (v) { return String(v).slice(0, 12); }).join(' | ');
-      }));
-    host.appendChild(U.el('div', { class: 'gp-code', text: preview.join('\n') + '\n…（仅显示前 8 列 / 前 3 行）' }));
-
-    if (r.plan.stats.missing.length) {
-      host.appendChild(U.el('p', { class: 'hint gp-warn', text: '缺少列：' + r.plan.stats.missing.join('、') }));
-    }
-    if (!r.opts.anonNames) {
-      host.appendChild(U.el('p', { class: 'hint gp-warn', text: '⚠ 当前未脱敏：生成的内置数据会带上真实同盟 / 玩家名，分享项目时会外泄。' }));
-    } else {
-      host.appendChild(U.el('p', { class: 'hint gp-ok', text: '✓ 已脱敏：可安全随项目分发。' }));
-    }
-  }
-
-  function openGenDrawer(batchId) {
-    if (!store.battles.length) {
-      U.toast('还没有数据，先导入战报表或点击「载入示例表」。', 'err');
+    if (!diag.ok) {
+      box.innerHTML = U.el('div', { class: 'src-empty' }, [
+        U.el('strong', { text: '尚未载入数据' }),
+        U.el('p', { text: diag.message })
+      ]).innerHTML;
       return;
     }
-    if (batchId) genState.source = 'batch:' + batchId;
-    genState.open = true;
-    buildSourceOptions();
-    renderGenPreview();
-    $('#genMask').classList.add('open');
-    $('#genDrawer').classList.add('open');
-    $('#genDrawer').setAttribute('aria-hidden', 'false');
-  }
 
-  function closeGenDrawer() {
-    genState.open = false;
-    $('#genMask').classList.remove('open');
-    $('#genDrawer').classList.remove('open');
-    $('#genDrawer').setAttribute('aria-hidden', 'true');
-  }
+    const rows = [
+      ['战报记录', counts.total + ' 场'],
+      ['完整交战', counts.block + ' 场'],
+      ['续战段', counts.child + ' 场（不计入统计）']
+    ];
+    if (meta.players) rows.push(['玩家', meta.players + ' 人']);
+    if (meta.heroes) rows.push(['武将记录', U.fmtNum ? U.fmtNum(meta.heroes) : meta.heroes + ' 条']);
+    if (meta.earliest) rows.push(['时间范围', meta.earliest.slice(0, 10) + ' ~ ' + (meta.latest || '').slice(0, 10)]);
+    if (meta.source) rows.push(['数据来源', String(meta.source).slice(0, 40)]);
+    if (meta.generatedAt) rows.push(['导出时间', String(meta.generatedAt).replace('T', ' ').slice(0, 19)]);
 
-  function downloadGenJs() {
-    const r = genState.result || computeConversion();
-    U.downloadText('sample-data.js', r.js, 'text/javascript;charset=utf-8');
-    U.toast('已导出 <b>sample-data.js</b>，请覆盖到项目的 <b>js/sample-data.js</b>，刷新页面即可生效。', 'ok', 5600);
-  }
+    box.innerHTML = '';
+    const tbl = U.el('div', { class: 'src-stats' });
+    rows.forEach(function (pair) {
+      tbl.appendChild(U.el('div', { class: 'src-row' }, [
+        U.el('span', { class: 'k', text: pair[0] }),
+        U.el('span', { class: 'v', text: pair[1] })
+      ]));
+    });
+    box.appendChild(tbl);
 
-  function downloadGenCsv() {
-    const r = genState.result || computeConversion();
-    // 文件名与项目里 samples/ 下的示例表保持一致，覆盖时不会对不上
-    const detailed = AC.detail.hasDetail(r.battles);
-    const name = detailed ? 'alliance_detail_sample.csv' : 'alliance_battles_sample.csv';
-    U.downloadText(name, r.csv, 'text/csv;charset=utf-8');
-    U.toast('已导出配套 CSV（<b>' + name + '</b>），可覆盖 <b>samples/' + name + '</b>，与 sample-data.js 一起提交。', 'ok', 5600);
+    // 来源标签：上传的数据与内置文件区分显示
+    const btnClearUp = $('#btnClearUpload');
+    if (btnClearUp) btnClearUp.hidden = !store.hasUploaded;
+    if (store.hasUploaded) {
+      box.appendChild(U.el('p', {
+        class: 'hint',
+        text: '当前使用上传的数据文件（优先于内置）。点「移除上传」可回到内置数据。'
+      }));
+    }
+
+    if (counts.child > 0) {
+      box.appendChild(U.el('p', {
+        class: 'hint',
+        text: '续战段（child）是同一场交战的中间过程，只用于明细展示与连赢判定，不重复计入统计。'
+      }));
+    }
   }
 
   /* ================= 重算与刷新 ================= */
@@ -1025,17 +800,20 @@ window.AC = window.AC || {};
 
   function updateStats(r, withAnim) {
     const s = r.stats;
+    const counts = store.counts();
     setNum('#statBattles', s.totalKept, withAnim);
     setNum('#statNodes', s.nodeShown, withAnim);
     setNum('#statEdges', s.edgeCount, withAnim);
     setNum('#statPairs', s.pairCount, withAnim);
-    setNum('#statBatches', store.batches.length, withAnim);
+    const statTotal = $('#statTotal');
+    if (statTotal) setNum('#statTotal', counts.total, withAnim);
 
     const sum = $('#dataSummary');
-    if (!store.battles.length) {
-      sum.textContent = '尚未导入数据';
+    if (!counts.total) {
+      sum.textContent = '尚未载入数据';
     } else {
-      let t = '累计 ' + store.battles.length + ' 场 · ' + store.batches.length + ' 份表';
+      let t = '共 ' + counts.total + ' 条记录（完整交战 ' + counts.block
+            + ' · 续战段 ' + counts.child + '）';
       if (s.timeFrom) {
         const f = new Date(s.timeFrom), to = new Date(s.timeTo);
         t += ' · ' + fmtTime(f) + ' ~ ' + fmtTime(to);
@@ -1095,6 +873,8 @@ window.AC = window.AC || {};
     matrix.setSelection({ type: 'node', id: key });
     if (!fromRank) matrix.setSelection({ type: 'node', id: key });
     renderNodeInspector(node);
+    // 切换选中阵容后详情面板从头看
+    U.scrollTopAll($('#inspector'));
   }
 
   /* 阵容推荐配置：从同盟画像里收集这套阵容被用过的全部配置（懒聚合 + 随数据失效） */
@@ -1496,8 +1276,7 @@ window.AC = window.AC || {};
       U.el('div', { class: 'insp-title' }, [
         U.el('div', {}, [U.compWithTroop(nameA, A ? A.troopSig : '')]),
         U.el('div', { style: { color: '#8fa3c4', fontSize: '12px', margin: '3px 0' }, text: 'VS' }),
-        U.el('div', {}, [U.compWithTroop(nameB, B ? B.troopSig : '')])
-      ])
+        U.el('div', {}, [U.compWithTroop(nameB, B ? B.troopSig : '')])      ])
     ]));
 
     const lead = rateA >= 0.5 ? nameA : nameB;
@@ -1574,6 +1353,9 @@ window.AC = window.AC || {};
       sec.appendChild(U.el('div', { class: 'hint', text: '仅显示最近 30 条，完整记录见「原始战报」页。' }));
     }
     insp.appendChild(sec);
+
+    // 切换对阵后详情面板从头看
+    U.scrollTopAll(insp);
   }
 
   function battleMini(b, focusKey) {
@@ -1702,12 +1484,6 @@ window.AC = window.AC || {};
     }, 'image/png');
   }
 
-  function exportArchive() {
-    if (!store.battles.length) { U.toast('没有数据可导出。', 'err'); return; }
-    U.downloadText('战报累计存档_' + U.stamp() + '.json', store.exportJSON(), 'application/json;charset=utf-8');
-    U.toast('已导出存档，下次用「恢复存档」即可继续叠加。', 'ok');
-  }
-
   document.addEventListener('DOMContentLoaded', init);
 
   /* ================= 版本与缓存自检 ================= */
@@ -1749,18 +1525,12 @@ window.AC = window.AC || {};
     store: store,
     filters: filters,
     state: state,
-    genState: genState,
-    ingest: ingest,
-    importFiles: importFiles,
-    decodeBuffer: decodeBuffer,
     recompute: recompute,
+    renderDataSource: renderDataSource,
     switchView: switchView,
     selectNode: selectNode,
     showPair: showPair,
     clearSelection: clearSelection,
-    openGenDrawer: openGenDrawer,
-    closeGenDrawer: closeGenDrawer,
-    computeConversion: computeConversion,
     graphRef: function () { return graph; },
     matrixRef: function () { return matrix; },
     allianceRef: function () { return allianceView; },

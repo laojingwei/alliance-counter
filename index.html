@@ -8,11 +8,11 @@
 <meta http-equiv="Pragma" content="no-cache" />
 <meta http-equiv="Expires" content="0" />
 <title>xww-三国谋定天下：同盟对战 · 阵容克制关系图</title>
-<link rel="stylesheet" href="css/style.css?v=202610131945s" />
+<link rel="stylesheet" href="css/style.css?v=202610140407s" />
 </head>
 <body data-repo="https://github.com/laojingwei/alliance-counter">
 
-<!-- 启动加载提示：必须零依赖（此时 css/js/sample-data 可能都还没加载完，甚至 GitHub Pages 正在慢速下载），
+<!-- 启动加载提示：必须零依赖（此时 css/js/battle-data 可能都还没加载完，甚至 GitHub Pages 正在慢速下载），
      所以样式与计时全部内联。数据就绪后由 app.js 调用 window.__bootReady() 撤下。
      没有它的话页面会长时间停在「还没有数据」，用户会以为卡死而反复刷新，反而更慢。 -->
 <div id="bootLoading" style="position:fixed;inset:0;z-index:9999;background:#0a11206b;-webkit-backdrop-filter:blur(7px);backdrop-filter:blur(7px);display:flex;align-items:center;justify-content:center;font-family:system-ui,-apple-system,'Segoe UI','Microsoft YaHei',sans-serif;">
@@ -78,14 +78,12 @@
     <div class="stat"><span class="stat-num" id="statNodes">0</span><span class="stat-label">阵容数</span></div>
     <div class="stat"><span class="stat-num" id="statEdges">0</span><span class="stat-label">克制关系</span></div>
     <div class="stat"><span class="stat-num" id="statPairs">0</span><span class="stat-label">对阵组合</span></div>
-    <div class="stat"><span class="stat-num" id="statBatches">0</span><span class="stat-label">数据批次</span></div>
+    <div class="stat"><span class="stat-num" id="statTotal">0</span><span class="stat-label">战报总数</span></div>
   </div>
 
   <div class="topbar-actions">
-    <button class="btn btn-ghost" id="btnExport" title="把当前累计数据导出为 JSON 存档">导出存档</button>
-    <button class="btn btn-ghost" id="btnImportJson" title="从 JSON 存档恢复累计数据">恢复存档</button>
     <button class="btn btn-ghost" id="btnCheckUpdate" title="检查有没有新版本">版本检查</button>
-    <button class="btn btn-primary" id="btnImport">导入战报表</button>
+    <button class="btn btn-primary" id="btnReloadDataTop">↻ 重新载入数据</button>
     <div class="update-panel" id="updatePanel"></div>
   </div>
 </header>
@@ -95,25 +93,24 @@
   <!-- ================= 左侧：导入与筛选 ================= -->
   <aside class="panel sidebar">
     <section class="block">
-      <h2 class="block-title">数据导入（自动叠加）</h2>
-      <div class="dropzone" id="dropzone">
-        <div class="dropzone-inner">
-          <strong>拖入 CSV 战报表</strong>
-          <span>或点击选择文件，可一次选多个</span>
-        </div>
+      <h2 class="block-title">数据源</h2>
+      <div class="src-panel" id="dataSource"></div>
+      <div class="upload-zone" id="uploadZone" title="支持 sanmou-viewer 导出的 .js / .json / .jsonl">
+        <strong>拖入数据文件，或点击选择</strong>
+        <span>支持 .js / .json / .jsonl（sanmou-viewer 导出）</span>
       </div>
-      <p class="hint">每次导入都会与已有数据合并去重（按「战斗Key」去重），不会覆盖历史记录。</p>
-      <div class="batch-list" id="batchList"></div>
+      <input type="file" id="uploadInput" accept=".js,.json,.jsonl" hidden />
       <div class="row-actions">
-        <button class="btn btn-ghost btn-sm" id="btnLoadSample">载入示例表</button>
-            <button class="btn btn-ghost btn-sm" id="btnLoadPrev" title="载入刷新前正在看的那份数据（默认展示内置数据，首次导入的数据仍保留）">载入上次数据</button>
-        <button class="btn btn-ghost btn-sm danger" id="btnClearAll">清空全部数据</button>
+        <button class="btn btn-accent btn-sm" id="btnReloadData">↻ 重新载入</button>
+        <button class="btn btn-ghost btn-sm" id="btnClearUpload" hidden title="移除上传的数据，回到内置数据文件">移除上传</button>
+        <button class="btn btn-ghost btn-sm danger" id="btnClearAll">清空数据</button>
       </div>
-      <div class="row-actions">
-        <button class="btn btn-accent btn-sm" id="btnBuildSample" title="把某份表转换成页面内置的示例数据">⇩ 生成内置数据</button>
-      </div>
-      <p class="hint">「生成内置数据」会把选中的表（默认自动脱敏）转换成 <b>sample-data.js</b>，
-        下载后覆盖项目里的 <b>js/sample-data.js</b> 即可更新内置示例。</p>
+      <p class="hint">
+        数据来自 <a href="https://github.com/laojingwei/sanmou-viewer" target="_blank" rel="noopener noreferrer">sanmou-viewer</a> 的「战报数据 → 导出数据文件」。
+        可直接拖入导出文件（<code>.js</code> / <code>.json</code> / <code>.jsonl</code>），
+        或把 <b>battle-data.js</b> 放到 <b>js/</b> 目录作为内置数据。
+        上传的数据存在本机浏览器，刷新后仍然生效。
+      </p>
     </section>
 
     <section class="block">
@@ -241,7 +238,8 @@
         <div class="canvas-overlay" id="graphTip"></div>
         <div class="empty-state" id="graphEmpty">
           <h3>还没有数据</h3>
-          <p>在左侧拖入战报 CSV，或点击「载入示例表」体验。</p>
+          <p>用 sanmou-viewer 的「战报数据 → 导出数据文件」生成 battle-data.js，<br>
+             放到 <code>js/</code> 目录并刷新页面。</p>
         </div>
       </div>
 
@@ -310,76 +308,27 @@
 
 </main>
 
-<div class="global-drop" id="globalDrop"><div class="global-drop-inner">松开鼠标，导入战报表</div></div>
 <div class="toast-host" id="toastHost"></div>
 
-<!-- ================= 生成内置数据面板 ================= -->
-<div class="drawer-mask" id="genMask"></div>
-<aside class="drawer" id="genDrawer" aria-hidden="true">
-  <header class="drawer-head">
-    <div>
-      <h2>生成内置数据</h2>
-      <p class="drawer-sub">把一张战报表转换成页面内置的示例数据</p>
-    </div>
-    <button class="drawer-close" id="genClose" title="关闭（Esc）">✕</button>
-  </header>
-
-  <div class="drawer-body">
-    <section class="block">
-      <h2 class="block-title">1 · 选择数据来源</h2>
-      <select class="select" id="genSource"></select>
-      <p class="hint">可以选全部累计数据，也可以只选某一次导入的表。</p>
-    </section>
-
-    <section class="block">
-      <h2 class="block-title">2 · 脱敏设置</h2>
-      <label class="check"><input type="checkbox" id="genValidOnly" checked /> 只保留有效对局（推荐，能显著减小内置数据体积）</label>
-      <p class="hint" id="genValidHint">只剔除「人数不足」和「单位等级过低」的异常记录。<b>同阵容内战会保留</b>——那是对局事实，是否参与分析由分析时的开关决定，不在导出阶段删数据。</p>
-      <label class="check"><input type="checkbox" id="genAnon" checked /> 脱敏同盟名与玩家名（强烈建议保持开启）</label>
-      <label class="check"><input type="checkbox" id="genAnonId" /> 同时替换战斗Key里的数字 ID</label>
-      <label class="check"><input type="checkbox" id="genAnonPlace" /> 同时替换地点坐标</label>
-      <p class="hint" id="genAnonWarn">内置数据会随项目一起分发给别人，关闭脱敏会把真实同盟 / 玩家名写进去。</p>
-    </section>
-
-    <section class="block">
-      <h2 class="block-title">3 · 转换预览</h2>
-      <div class="gen-preview" id="genPreview"></div>
-    </section>
-
-    <section class="block">
-      <h2 class="block-title">4 · 下载并替换</h2>
-      <div class="row-actions">
-        <button class="btn btn-primary btn-sm" id="genDownloadJs">下载 sample-data.js</button>
-        <button class="btn btn-ghost btn-sm" id="genDownloadCsv">下载配套 CSV</button>
-      </div>
-      <p class="hint">把下载的 <b>sample-data.js</b> 覆盖到项目的 <b>js/sample-data.js</b>，刷新页面即可生效；
-        同时用配套 CSV 覆盖 <b>samples/</b> 里的示例表，便于一起提交到 git。</p>
-    </section>
-  </div>
-</aside>
-
-<input type="file" id="fileInput" accept=".csv,.txt" multiple hidden />
-<input type="file" id="jsonInput" accept=".json" hidden />
-
-<script src="js/version.js?v=202610131945s"></script>
-<script src="js/util.js?v=202610131945s"></script>
-<script src="js/csv.js?v=202610131945s"></script>
-<script src="js/model.js?v=202610131945s"></script>
-<script src="js/detail.js?v=202610131945s"></script>
-<script src="js/anonymize.js?v=202610131945s"></script>
-<script src="js/store.js?v=202610131945s"></script>
-<script src="js/analyzer.js?v=202610131945s"></script>
-<script src="js/graph.js?v=202610131945s"></script>
-<script src="js/matrix.js?v=202610131945s"></script>
-<script src="js/rank.js?v=202610131945s"></script>
-<script src="js/table.js?v=202610131945s"></script>
-<script src="js/alliance.js?v=202610131945s"></script>
-<script src="js/heroes.js?v=202610131945s"></script>
-<script src="js/mirror.js?v=202610131945s"></script>
-<script src="js/gear.js?v=202610131945s"></script>
-<script src="js/player.js?v=202610131945s"></script>
-<!-- 内置示例数据（12MB）不再同步加载：由 app.js 在点「载入示例表」或 ?demo=1 时动态拉取，首屏因此秒开 -->
-<script src="js/update.js?v=202610131945s"></script>
-<script src="js/app.js?v=202610131945s"></script>
+<script src="js/version.js?v=202610140407s"></script>
+<script src="js/util.js?v=202610140407s"></script>
+<script src="js/model.js?v=202610140407s"></script>
+<script src="js/store.js?v=202610140407s"></script>
+<!-- 战报数据（由 sanmou-viewer 的「战报数据 → 导出数据文件」生成）
+     没有这个文件时页面会提示如何获取，其余功能照常可用 -->
+<script src="js/battle-data.js?v=202610140407s" onerror="window.__noBattleData=true"></script>
+<script src="js/sanmou-source.js?v=202610140407s"></script>
+<script src="js/analyzer.js?v=202610140407s"></script>
+<script src="js/graph.js?v=202610140407s"></script>
+<script src="js/matrix.js?v=202610140407s"></script>
+<script src="js/rank.js?v=202610140407s"></script>
+<script src="js/table.js?v=202610140407s"></script>
+<script src="js/alliance.js?v=202610140407s"></script>
+<script src="js/heroes.js?v=202610140407s"></script>
+<script src="js/mirror.js?v=202610140407s"></script>
+<script src="js/gear.js?v=202610140407s"></script>
+<script src="js/player.js?v=202610140407s"></script>
+<script src="js/update.js?v=202610140407s"></script>
+<script src="js/app.js?v=202610140407s"></script>
 </body>
 </html>

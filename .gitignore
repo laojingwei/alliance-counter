@@ -37,3 +37,7 @@ dist/
 *.csvbk
 *.csv.bak
 
+
+# ---- Sanmou 战报数据（sanmou-viewer 导出）----
+# 含真实玩家/同盟名，默认不进仓库；要内置到 Pages 就取消下面这行注释
+# js/battle-data.js

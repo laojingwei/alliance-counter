@@ -13,7 +13,7 @@ const sandbox = {
 sandbox.globalThis = sandbox;
 vm.createContext(sandbox);
 
-['js/util.js', 'js/csv.js', 'js/model.js', 'js/analyzer.js', 'js/alliance.js', 'js/player.js'].forEach((f) => {
+['js/util.js', 'js/model.js', 'js/analyzer.js', 'js/alliance.js', 'js/player.js'].forEach((f) => {
   vm.runInContext(fs.readFileSync(path.join(root, f), 'utf8'), sandbox, { filename: f });
 });
 const AC = sandbox.window.AC;

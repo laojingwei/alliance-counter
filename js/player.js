@@ -732,7 +732,7 @@ window.AC = window.AC || {};
       pager.innerHTML = '';
       pager.appendChild(U.el('button', {
         class: 'bl-btn', text: '上一页', disabled: page === 0 ? 'disabled' : null,
-        onclick: function () { if (page > 0) { page--; renderPage(); renderPager(); } }
+        onclick: function () { if (page > 0) { page--; renderPage(); renderPager(); body.scrollTop = 0; } }
       }));
       pager.appendChild(U.el('span', {
         class: 'bl-page',
@@ -741,7 +741,7 @@ window.AC = window.AC || {};
       }));
       pager.appendChild(U.el('button', {
         class: 'bl-btn', text: '下一页', disabled: page >= totalPages - 1 ? 'disabled' : null,
-        onclick: function () { if (page < totalPages - 1) { page++; renderPage(); renderPager(); } }
+        onclick: function () { if (page < totalPages - 1) { page++; renderPage(); renderPager(); body.scrollTop = 0; } }
       }));
     }
 
@@ -876,7 +876,17 @@ window.AC = window.AC || {};
   }
 
   function PlayerView(listHost, detailHost, callbacks) {
+    // listHost 原本是滚动容器（.ally-list）。这里把它改造成两层结构：
+    //   listHost（固定，不滚动）
+    //     ├─ .pf-bar      筛选栏（固定在顶部）
+    //     └─ .pf-scroll   成员列表（独立滚动 → 滚动条只出现在列表旁边）
+    // 这样筛选栏不再需要 sticky，滚动条也不会长到筛选栏右边。
+    listHost.classList.remove('ally-list');
+    listHost.classList.add('ally-list', 'pf-host');   // 保留 ally-list 的边框与宽度；滚动交给 pf-scroll
+    const scroll = U.el('div', { class: 'pf-scroll' });
+    listHost.appendChild(scroll);
     this.listHost = listHost;
+    this.scrollHost = scroll;      // 成员项 / 空提示插到这里
     this.detailHost = detailHost;
     this.cb = callbacks || {};
     this.data = null;
@@ -935,7 +945,7 @@ window.AC = window.AC || {};
     this.result = result;
     this.allBattles = allBattles;
     if (!result || !result.battles || !result.battles.length) {
-      this.listHost.innerHTML = '';
+      this.resetHost();
       this.detailHost.innerHTML = '';
       this.detailHost.appendChild(U.el('div', { class: 'empty-state', style: { position: 'static', padding: '60px 0' } }, [
         U.el('h3', { text: '还没有可分析的玩家数据' }),
@@ -947,7 +957,7 @@ window.AC = window.AC || {};
     this._keptIdSet = new Set(result.battles.map(function (b) { return b.id; }));
     this.data = build(result, allBattles);
     if (!this.data.players.length) {
-      this.listHost.innerHTML = '';
+      this.resetHost();
       this.detailHost.innerHTML = '';
       this.detailHost.appendChild(U.el('div', { class: 'empty-state', style: { position: 'static', padding: '60px 0' } }, [
         U.el('h3', { text: '当前数据里没有玩家信息' }),
@@ -965,19 +975,22 @@ window.AC = window.AC || {};
     const list = this.applyFilter();
     const c = this.listHost.querySelector('.pf-count span');
     if (c) c.textContent = '匹配 ' + list.length + ' / ' + this.data.players.length + ' 个玩家';
-    Array.prototype.slice.call(this.listHost.querySelectorAll('.ally-item, .hint')).forEach(function (n) { n.remove(); });
+    Array.prototype.slice.call(this.scrollHost.querySelectorAll('.ally-item, .hint')).forEach(function (n) { n.remove(); });
     if (!list.length) {
-      this.listHost.appendChild(U.el('div', { class: 'hint', style: { padding: '12px 4px' }, text: '没有符合筛选条件的玩家。' }));
+      this.scrollHost.appendChild(U.el('div', { class: 'hint', style: { padding: '12px 4px' }, text: '没有符合筛选条件的玩家。' }));
+      this.scrollHost.scrollTop = 0;
       return;
     }
     this.renderItems(list);
     // 列表 DOM 被重建过，选中高亮要补回来（否则一改筛选左侧高亮就丢了）
     if (this.selected) this.markActive(this.selected);
+    // 筛选条件变了：列表从头看
+    this.scrollHost.scrollTop = 0;
   };
 
   /** 只做列表高亮，不重绘详情 */
   PlayerView.prototype.markActive = function (name) {
-    const host = this.listHost;
+    const host = this.scrollHost;
     Array.prototype.forEach.call(host.querySelectorAll('.ally-item'), function (node) {
       node.classList.toggle('active', node.dataset.name === name);
     });
@@ -1044,12 +1057,20 @@ window.AC = window.AC || {};
       U.el('span', { text: '匹配 ' + this.applyFilter().length + ' / ' + this.data.players.length + ' 个玩家' })
     ]));
 
-    host.insertBefore(bar, host.firstChild);
+    // 筛选栏挂到 listHost（固定区，在 scrollHost 之上）
+    this.listHost.insertBefore(bar, this.scrollHost);
+  };
+
+  /** 重建两层结构：固定区（listHost）+ 独立滚动区（scrollHost） */
+  PlayerView.prototype.resetHost = function () {
+    this.listHost.innerHTML = '';
+    this.scrollHost = U.el('div', { class: 'pf-scroll' });
+    this.listHost.appendChild(this.scrollHost);
   };
 
   PlayerView.prototype.renderList = function () {
     const self = this;
-    this.listHost.innerHTML = '';
+    this.resetHost();
     this.renderFilters();
     this.renderItems(this.applyFilter());
   };
@@ -1086,7 +1107,7 @@ window.AC = window.AC || {};
         ])
       ]);
       item.addEventListener('click', function () { self.select(p.name); });
-      self.listHost.appendChild(item);
+      self.scrollHost.appendChild(item);
     });
   };
 
@@ -1095,6 +1116,8 @@ window.AC = window.AC || {};
     this.markActive(name);
     const p = this.data.players.filter(function (x) { return x.name === name; })[0];
     if (p) this.renderDetail(p);
+    // 切换玩家后详情区从头看
+    U.scrollTopAll(this.detailHost);
   };
 
   PlayerView.prototype.renderDetail = function (p) {

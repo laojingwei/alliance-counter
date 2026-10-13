@@ -358,6 +358,17 @@ window.AC = window.AC || {};
     counterLevelOfKey: counterLevelOfKey, isCounter: isCounter, shrinkRate: shrinkRate,
     hash: hash, toast: toast, downloadBlob: downloadBlob, downloadText: downloadText, stamp: stamp, esc: esc,
     troopKey: troopKey, troopColor: troopColor, troopBadge: troopBadge, troopBadges: troopBadges,
-    compWithTroop: compWithTroop, troopHtml: troopHtml
+    compWithTroop: compWithTroop, troopHtml: troopHtml,
+    /** 元素及其祖先里所有可滚动的容器都回到顶部（切换选中项后详情区应从头看） */
+    scrollTopAll: function (el) {
+      let n = el;
+      while (n) {
+        if (n.nodeType === 1) {
+          const oy = getComputedStyle(n).overflowY;
+          if ((oy === 'auto' || oy === 'scroll') && n.scrollHeight > n.clientHeight) n.scrollTop = 0;
+        }
+        n = n.parentElement;
+      }
+    }
   };
 })(window.AC);
