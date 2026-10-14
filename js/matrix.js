@@ -34,7 +34,7 @@ window.AC = window.AC || {};
     const list = result.nodeList.slice(0, topN);
     this.keys = list.map(function (n) { return n.key; });
     this.labels = list.map(function (n) {
-      return n.display.length > 22 ? n.display.slice(0, 21) + '…' : n.display;
+      return n.display.length > 30 ? n.display.slice(0, 29) + '…' : n.display;
     });
     this.fullLabels = list.map(function (n) { return n.display; });
     // 兵种串：画在标签右侧，和网络图保持一致
@@ -142,9 +142,21 @@ window.AC = window.AC || {};
     const ctx = this.ctx;
     ctx.font = '11.5px "Segoe UI","Microsoft YaHei",sans-serif';
     let lw = 0;
-    for (let i = 0; i < Math.min(n, 60); i++) lw = Math.max(lw, ctx.measureText(this.labels[i]).width);
-    const labelW = Math.min(230, lw + 26);
-    const labelH = 118;
+    for (let i = 0; i < Math.min(n, 60); i++) {
+      /* 行标签右侧还跟着兵种串（如「弓已枪」），不把它算进来会导致
+         标签可用宽度不足、长阵容名被截成「诸葛亮 / 诸葛瑾 / …」。 */
+      const sig = this.troopSigs[i] || '';
+      let w = ctx.measureText(this.labels[i]).width;
+      if (sig) w += ctx.measureText(sig).width + 5;
+      lw = Math.max(lw, w);
+    }
+    /* 标签区按最长标签给够（最多占画布 40%）：上限原来写死 230px，
+       长阵容名（如「诸葛亮 / 诸葛瑾 / SP周瑜」）会被画布裁掉、看着像被切了。 */
+    const cap = Math.max(160, this.w * 0.40);
+    const labelW = Math.min(cap, lw + 26);
+    /* 列标签是斜排的（-60°），所需高度约等于标签宽度的 0.87 倍 —— 原来写死 118px，
+       长阵容名斜着放就顶出画布，看着像被切掉。 */
+    const labelH = Math.min(190, Math.round(lw * 0.9) + 24);
     return { n: n, cell: cell, labelW: labelW, labelH: labelH, ox: labelW, oy: labelH };
   };
 

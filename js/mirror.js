@@ -711,9 +711,12 @@ window.AC = window.AC || {};
 
   /* ---------------- 视图 ---------------- */
 
-  function MirrorView(listHost, detailHost) {
+  function MirrorView(listHost, detailHost, opts) {
     this.listHost = listHost;
     this.detailHost = detailHost;
+    /* opts.onSelect(g)：切换左侧阵容时回调（宿主用来联动右侧详情面板，
+       比如让 #inspector 显示这套阵容的胜率拆解 / 攻守差异 / 原始战报明细） */
+    this.onSelect = (opts && typeof opts.onSelect === 'function') ? opts.onSelect : null;
     this.groups = [];
     this.selected = null;
   }
@@ -779,6 +782,8 @@ window.AC = window.AC || {};
     });
     const g = this.groups.filter(function (x) { return x.key === key; })[0];
     if (g) this.renderDetail(g);
+    // 联动宿主：右侧详情面板（#inspector）跟着显示这套阵容的详情
+    if (g && this.onSelect) this.onSelect(g);
     // 切换阵容后详情区从头看
     U.scrollTopAll(this.detailHost);
   };

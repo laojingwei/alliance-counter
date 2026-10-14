@@ -822,12 +822,21 @@ window.AC = window.AC || {};
           btn.textContent = open ? '收起平局段' : ('展开前面 ' + segs.length + ' 段平局');
         }
       });
+      /* 这一整场（所有段）加起来拿了多少武勋：结果卡只标末段的，
+         续战几场下来累计的武勋容易被低估，这里在标题栏补个合计。 */
+      const totalWuxun = (x.me && x.me.wuxun ? x.me.wuxun : 0)
+        + segs.reduce(function (s, sg) { return s + (sg.me && sg.me.wuxun ? sg.me.wuxun : 0); }, 0);
       wrap.appendChild(U.el('div', { class: 'bl2-chain-bar' }, [
         U.el('i', { class: 'bl2-chain-tag', text: '完整一场' }),
         U.el('span', {
           class: 'bl2-chain-note',
           text: '共 ' + (segs.length + 1) + ' 段（前面 ' + segs.length + ' 段打平后接着打），胜负以最后一段为准'
         }),
+        totalWuxun > 0 ? U.el('span', {
+          class: 'bl2-chain-wuxun',
+          title: '这场所有段（含平局续战段）加起来获得的武勋合计',
+          text: '武勋合计 ' + U.fmtInt(totalWuxun)
+        }) : null,
         btn
       ]));
       wrap.appendChild(card);
@@ -877,9 +886,13 @@ window.AC = window.AC || {};
       : [U.el('b', { text: '共 ' + list.length + ' 场' })];
     panel.appendChild(U.el('div', { class: 'bl-title bl2-title' }, [
       U.el('div', { class: 'bl-title-l' }, [
-        U.el('b', { text: playerName }),
-        U.el('span', { text: ' · ' }),
-        U.el('span', {}, [U.compWithTroop(comp.display, comp.troopSig)])
+        o.titleText
+          ? U.el('b', { text: o.titleText })
+          : U.el('span', {}, [
+              U.el('b', { text: playerName }),
+              U.el('span', { text: ' · ' }),
+              U.el('span', {}, [U.compWithTroop(comp.display, comp.troopSig)])
+            ])
       ]),
       U.el('div', { class: 'bl2-sum' }, summary),
       U.el('button', { class: 'bl-close', text: '×', title: '关闭（Esc）', onclick: close })

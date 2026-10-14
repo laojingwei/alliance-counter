@@ -2,7 +2,7 @@
    改完 version.json 后跑 `node tools/bump-version.mjs` 重新生成。 */
 window.AC = window.AC || {};
 window.AC.VERSION = {
-  "version": "202610140705s",
+  "version": "202610141905a",
   "releasedAt": "2026-10-13",
-  "name": "统计口径修正：只有打平才续战，独立交战不再被并掉"
+  "name": "内战分析的查看战报只显示内战对局"
 };

@@ -76,7 +76,14 @@ window.AC = window.AC || {};
 
       // 内战分析：唯一能控制「阵容」变量的场景，专门看配置差异的影响。
   // 数据源用 store.battles —— 主分析默认排除了内战，这里必须拿全量。
-  mirrorView = new AC.MirrorView($('#mirrorList'), $('#mirrorDetail'));
+  // onSelect：切换内战阵容时，右侧详情面板（#inspector）同步显示这套阵容的
+  // 内战数据（内战胜负 / 攻守差异 / 数值维度 / 内战战报），口径限定在内战对局。
+  mirrorView = new AC.MirrorView($('#mirrorList'), $('#mirrorDetail'), {
+    onSelect: function (g) {
+      renderMirrorInspector(g);
+      U.scrollTopAll($('#inspector'));
+    }
+  });
   gearView = new AC.GearView($('#gearWrap'));
   playerView = new AC.PlayerView($('#playerList'), $('#playerDetail'), {});
   matrix = new AC.Matrix($('#matrixCanvas'), {
@@ -944,6 +951,228 @@ window.AC = window.AC || {};
     });
   }
 
+  /**
+   * 阵容维度的全部对战：这套阵容被任何玩家使用过的战斗都算（不限玩家）。
+   * 复用玩家分析的战报浮层，自定义取数按「阵容 key」匹配任意一方，浮框展示详细对局明细。
+   */
+  function openCompBattleLog(node) {
+    const r = state.result;
+    if (!node || !node.key) return;
+    if (!AC.playerAnalysis || !AC.playerAnalysis.openBattleLog) {
+      U.toast('战报浮层不可用。', 'err');
+      return;
+    }
+    const keptSet = new Set((r && r.battles ? r.battles : []).map(function (b) { return b.id; }));
+    AC.playerAnalysis.openBattleLog({
+      result: r,
+      allBattles: (r && r.allBattles) ? r.allBattles : (r ? r.battles : []),
+      keptIdSet: keptSet,
+      playerName: '',
+      comp: node,
+      titleText: '阵容「' + (node.display || node.key) + '」· 全部对战（' + (node.battleIds ? node.battleIds.length : 0) + ' 场）',
+      gatherFn: function (allBattles, kept) {
+        return gatherCompBattles(allBattles, kept, node);
+      }
+    });
+  }
+
+  /**
+   * 取一套阵容的全部对战（任意玩家使用都算），结构对齐玩家分析战报浮层需要的 list 项。
+   * 与 collectBattles 的区别：不限定玩家，只看阵容 key 是否出现在某一方。
+   * 视角锚点用「玩家」而不是逐段的阵容 key：同一场战斗里双方玩家不变（model.samePair
+   * 的既有结论），而阵容 key 会因武将打光而变短（如「刘禅 / 甘夫人 / 赵云」打到只剩
+   * 「刘禅 / 赵云」），逐段按 key 判方向会让同一条链里某几段翻到对手视角 —— 卡片
+   * 攻守互换、胜负印章跟着错。
+   */
+  function gatherCompBattles(allBattles, kept, comp) {
+    const out = [];
+    (allBattles || []).forEach(function (b) {
+      const segs = (b.segs && b.segs.length) ? b.segs : [b];
+      /* 找出使用焦点阵容的玩家（同一场内同一部队玩家不变，取任一命中段即可） */
+      let anchorPlayer = null;
+      segs.forEach(function (sg) {
+        [sg.atk, sg.def].forEach(function (s) {
+          if (!anchorPlayer && s && s.key === comp.key && s.player) anchorPlayer = s.player;
+        });
+      });
+      if (!anchorPlayer) return;
+      const mine = [];
+      segs.forEach(function (sg) {
+        /* 每段按「锚点玩家在哪一侧」定方向：key 漂移的段也能保持同一视角 */
+        const atkIsMe = sg.atk && sg.atk.player === anchorPlayer;
+        const defIsMe = sg.def && sg.def.player === anchorPlayer;
+        if (!atkIsMe && !defIsMe) return;
+        const role = atkIsMe ? 'atk' : 'def';
+        const me = atkIsMe ? sg.atk : sg.def;
+        const foe = atkIsMe ? sg.def : sg.atk;
+        if (!me) return;
+        mine.push({
+          id: sg.id, time: sg.time, ts: sg.ts, place: sg.place, round: sg.round,
+          result: sg.result, role: role, me: me, foe: foe
+        });
+      });
+      if (!mine.length) return;
+      mine.sort(function (a, bb) { return (a.ts || 0) - (bb.ts || 0); });
+      const last = mine[mine.length - 1];
+      const inKept = kept.has(b.id);
+      out.push({
+        id: b.id, time: last.time, ts: last.ts, place: last.place, round: last.round,
+        result: last.result, role: last.role,
+        me: last.me, foe: last.foe,
+        isChild: b.recordType === 'child',
+        filtered: !inKept,
+        filteredBy: inKept ? '' : (b.recordType === 'child' ? 'child' : 'sample'),
+        segs: mine.slice(0, -1)
+      });
+    });
+    return out;
+  }
+
+  /**
+   * 内战战报浮层：只列这套阵容的**内战对局**（同一套阵容对同一套阵容），
+   * 与 openCompBattleLog（全部对战）区分 —— 内战分析页的「查看战报」用这个。
+   * 视角固定为攻方：内战双方阵容相同，没有「我方/对手」之分，按攻守展示最直观；
+   * 卡片上的玩家名 / 同盟名仍各自显示，方便对照「数值维度影响」里哪个配置赢了。
+   */
+  function openMirrorBattleLog(g) {
+    const r = state.result;
+    if (!g || !g.key) return;
+    if (!AC.playerAnalysis || !AC.playerAnalysis.openBattleLog) {
+      U.toast('战报浮层不可用。', 'err');
+      return;
+    }
+    const keptSet = new Set((r && r.battles ? r.battles : []).map(function (b) { return b.id; }));
+    AC.playerAnalysis.openBattleLog({
+      result: r,
+      allBattles: (r && r.allBattles) ? r.allBattles : (r ? r.battles : []),
+      keptIdSet: keptSet,
+      playerName: '',
+      comp: { key: g.key, display: g.display, troopSig: g.troopSig },
+      titleText: '内战「' + (g.display || g.key) + '」· 内战对局（' + (g.list ? g.list.length : 0) + ' 场）',
+      gatherFn: function (allBattles, kept) {
+        return gatherMirrorBattles(allBattles, kept, g.key);
+      }
+    });
+  }
+
+  /**
+   * 收集一套阵容的内战对局（atk.key === def.key 才算内战）。
+   * 段结构对齐战报浮层要求；攻守视角 = 攻方视角（me=攻方、foe=守方），
+   * 不需要玩家锚点 —— 内战里攻守就是天然的两侧，不会受 key 漂移影响。
+   */
+  function gatherMirrorBattles(allBattles, kept, key) {
+    const out = [];
+    (allBattles || []).forEach(function (b) {
+      /* 合并体看主段即可：同一场战斗里双方玩家与阵营不变（samePair 的既有结论），
+         主段是内战，整场就是内战；主段不是，续战段也不会变成内战。
+         人数不满 3 的残缺队（斯巴达队）与 groupMirrors 的口径一致：不算内战。 */
+      if (!b.atk || !b.def || b.atk.key !== key || b.def.key !== key) return;
+      if ((b.atk.size || 0) < 3 || (b.def.size || 0) < 3) return;
+      const segs = (b.segs && b.segs.length) ? b.segs : [b];
+      const mine = [];
+      segs.forEach(function (sg) {
+        if (!sg.atk || !sg.def) return;
+        mine.push({
+          id: sg.id, time: sg.time, ts: sg.ts, place: sg.place, round: sg.round,
+          result: sg.result, role: 'atk', me: sg.atk, foe: sg.def
+        });
+      });
+      if (!mine.length) return;
+      mine.sort(function (a, bb) { return (a.ts || 0) - (bb.ts || 0); });
+      const last = mine[mine.length - 1];
+      const inKept = kept.has(b.id);
+      out.push({
+        id: b.id, time: last.time, ts: last.ts, place: last.place, round: last.round,
+        result: last.result, role: last.role,
+        me: last.me, foe: last.foe,
+        isChild: b.recordType === 'child',
+        filtered: !inKept,
+        filteredBy: inKept ? '' : (b.recordType === 'child' ? 'child' : 'sample'),
+        segs: mine.slice(0, -1)
+      });
+    });
+    return out;
+  }
+
+  /**
+   * 对阵明细：只列这两套阵容之间的对战（按原始战斗编号匹配），浮框展示详细对局明细。
+   */
+  function openPairBattleLog(p, k1, k2, nameA, nameB) {
+    const r = state.result;
+    if (!p || !p.battleIds || !p.battleIds.length) return;
+    if (!AC.playerAnalysis || !AC.playerAnalysis.openBattleLog) {
+      U.toast('战报浮层不可用。', 'err');
+      return;
+    }
+    const comp = { key: k1, display: nameA };
+    const keptSet = new Set((r && r.battles ? r.battles : []).map(function (b) { return b.id; }));
+    AC.playerAnalysis.openBattleLog({
+      result: r,
+      allBattles: (r && r.allBattles) ? r.allBattles : (r ? r.battles : []),
+      keptIdSet: keptSet,
+      playerName: '',
+      comp: comp,
+      titleText: '对阵「' + (nameA || k1) + '」 vs 「' + (nameB || k2) + '」· 原始对局（' + p.battleIds.length + ' 场）',
+      gatherFn: function (allBattles, kept) {
+        return gatherByIds(allBattles, kept, p.battleIds, k1, k2);
+      }
+    });
+  }
+
+  /**
+   * 按原始战斗编号集合取战报（对阵明细用），结构对齐玩家分析战报浮层需要的 list 项。
+   * 视角固定为对阵左侧（k1），但锚点用「k1 的玩家」而不是逐段的阵容 key：
+   * 同一场战斗里双方玩家不变，而 key 会因武将打光变短（如「刘禅 / 甘夫人 / 赵云」
+   * 打到只剩「刘禅 / 赵云」），逐段按 key 判方向会让末段翻到对手视角 —— 同一张
+   * 链卡里攻守互换、胜负印章跟着错（实测「共 3 段」那张：前两段进攻视角、末段
+   * 却变成防守视角，胜方印章标到了对手头上）。
+   */
+  function gatherByIds(allBattles, kept, ids, k1, k2) {
+    const idSet = (ids instanceof Set) ? ids : new Set(ids || []);
+    const out = [];
+    (allBattles || []).forEach(function (b) {
+      if (!idSet.has(b.id)) return;
+      const segs = (b.segs && b.segs.length) ? b.segs : [b];
+      /* 锚点玩家：k1 在任一段里出现时的玩家（同一场内同一部队玩家不变） */
+      let anchorPlayer = null;
+      segs.forEach(function (sg) {
+        [sg.atk, sg.def].forEach(function (s) {
+          if (!anchorPlayer && s && s.key === k1 && s.player) anchorPlayer = s.player;
+        });
+      });
+      if (!anchorPlayer) return;
+      const mine = [];
+      segs.forEach(function (sg) {
+        /* 每段按「锚点玩家在哪一侧」定方向：key 漂移的段也能保持 k1 视角 */
+        const atkIsMe = sg.atk && sg.atk.player === anchorPlayer;
+        const defIsMe = sg.def && sg.def.player === anchorPlayer;
+        if (!atkIsMe && !defIsMe) return;
+        const role = atkIsMe ? 'atk' : 'def';
+        const me = atkIsMe ? sg.atk : sg.def;
+        const foe = atkIsMe ? sg.def : sg.atk;
+        if (!me) return;
+        mine.push({
+          id: sg.id, time: sg.time, ts: sg.ts, place: sg.place, round: sg.round,
+          result: sg.result, role: role, me: me, foe: foe
+        });
+      });
+      if (!mine.length) return;
+      mine.sort(function (a, bb) { return (a.ts || 0) - (bb.ts || 0); });
+      const last = mine[mine.length - 1];
+      const inKept = kept.has(b.id);
+      out.push({
+        id: b.id, time: last.time, ts: last.ts, place: last.place, round: last.round,
+        result: last.result, role: last.role,
+        me: last.me, foe: last.foe,
+        isChild: b.recordType === 'child',
+        filtered: !inKept,
+        filteredBy: inKept ? '' : (b.recordType === 'child' ? 'child' : 'sample'),
+        segs: mine.slice(0, -1)
+      });
+    });
+    return out;
+  }
+
   function openRecommendedConfig(node) {
     const all = recommendedConfigs(node);
     const SHOW = 20;                       // 变体可能上百套，只渲染排序后的前若干套
@@ -1153,12 +1382,15 @@ window.AC = window.AC || {};
     insp.appendChild(matchList('克制的对手', good, true));
     insp.appendChild(matchList('被克制的对手', bad, false));
 
-    // 最近战斗
-    const recent = r.battles.filter(function (b) { return node.battleIds.indexOf(b.id) >= 0; })
-      .sort(function (a, b) { return (b.ts || 0) - (a.ts || 0); }).slice(0, 6);
-    if (recent.length) {
+    // 最近对局：不再内联展示对局列表，改为「查看战报」按钮，点开用浮框面板看详细对局明细
+    const nBattles = node.battleIds ? node.battleIds.length : 0;
+    if (nBattles) {
       const sec = U.el('div', { class: 'insp-section' }, [U.el('h4', { text: '最近对局' })]);
-      recent.forEach(function (b) { sec.appendChild(battleMini(b, node.key)); });
+      sec.appendChild(U.el('button', {
+        class: 'insp-btn',
+        text: '查看战报（' + nBattles + '）',
+        onclick: function () { openCompBattleLog(node); }
+      }));
       insp.appendChild(sec);
     }
   }
@@ -1168,6 +1400,76 @@ window.AC = window.AC || {};
       U.el('div', { class: 'k', text: k }),
       U.el('div', { class: 'v', text: v })
     ]);
+  }
+
+  /**
+   * 内战分析的右侧详情面板：显示这套阵容的**内战口径**数据
+   * （内战胜负 / 攻守差异 / 数值维度影响 / 内战战报），
+   * 与点网络图节点时的全局口径区分开 —— 内战 = 同一套阵容对同一套阵容，
+   * 阵容本身一样，胜负只能由配置与攻守方决定，所以指标都围绕这两点。
+   */
+  function renderMirrorInspector(g) {
+    const insp = $('#inspector');
+    insp.innerHTML = '';
+
+    insp.appendChild(U.el('div', { class: 'insp-head' }, [
+      U.el('div', { class: 'insp-kicker', text: '内战分析 · 阵容详情' }),
+      U.el('h2', { class: 'insp-title' }, [U.compWithTroop(g.display, g.troopSig)])
+    ]));
+
+    insp.appendChild(U.el('div', { class: 'insp-grid' }, [
+      cell('内战场次', g.n + ' 场'),
+      cell('平均回合', g.avgRound.toFixed(1)),
+      cell('攻方胜率', U.fmtPct(g.atkRate, 1)),
+      cell('攻/守/平', g.atkWins + ' / ' + g.defWins + ' / ' + g.draws)
+    ]));
+    insp.appendChild(U.el('p', { class: 'hint', style: { margin: '6px 0 10px' },
+      text: '双方阵容完全相同，胜负由配置与攻守方决定。以下指标都只统计内战对局，不是这套阵容的全局数据。' }));
+
+    /* 数值维度影响（内战口径）：哪一项数值更高的一方更容易赢 */
+    if (g.dims && g.dims.length) {
+      const sec = U.el('div', { class: 'insp-section' }, [U.el('h4', { text: '数值维度影响（内战）' })]);
+      const maxAbs = Math.max.apply(null, g.dims.map(function (d) { return Math.abs(d.gap); })) || 0.01;
+      g.dims.slice(0, 8).forEach(function (d) {
+        sec.appendChild(U.el('div', { class: 'dim-row' }, [
+          U.el('div', { class: 'dim-name', title: d.name, text: d.name }),
+          U.el('div', { class: 'dim-bar' }, [
+            U.el('i', { style: { width: (Math.abs(d.gap) / maxAbs * 100) + '%', background: U.rateColor(d.higherRate) } })
+          ]),
+          U.el('div', { class: 'dim-rate', style: { color: U.rateColor(d.higherRate) }, text: U.fmtPct(d.higherRate, 0) }),
+          U.el('div', { class: 'dim-n', text: d.n + ' 场' })
+        ]));
+      });
+      insp.appendChild(sec);
+    }
+
+    /* 攻守差异：这个阵容打内战时，先手攻有没有便宜 */
+    const secAtk = U.el('div', { class: 'insp-section' }, [U.el('h4', { text: '攻守差异' })]);
+    secAtk.appendChild(U.el('div', { class: 'fs-note' }, [
+      U.el('span', { text: '攻方胜率' }),
+      U.el('b', { style: { color: U.rateColor(g.atkRate) }, text: U.fmtPct(g.atkRate, 1) }),
+      U.el('span', { style: { color: '#5d6f8f' }, text: '　攻 ' + g.atkWins + ' 胜 / 守 ' + g.defWins + ' 胜 / 平 ' + g.draws })
+    ]));
+    secAtk.appendChild(U.el('div', { class: 'fs-note' }, [
+      U.el('span', { text: '优势解读' }),
+      U.el('b', { style: { color: '#8fa3c4' }, text:
+        g.atkRate > 0.55 ? '先手攻占优' : (g.atkRate < 0.45 ? '后手守占优' : '攻守均衡') }),
+      U.el('span', { style: { color: '#5d6f8f' }, text: '　攻守胜率差超过 ±5% 才有意义（内战样本通常不大）' })
+    ]));
+    insp.appendChild(secAtk);
+
+    /* 内战战报：浮框逐场展示，只收这套阵容的内战对局（atk.key === def.key），
+       不是全部对战 —— 与「阵容详情」页的全量口径区分开 */
+    const nBattles = g.list ? g.list.length : 0;
+    if (nBattles) {
+      const sec = U.el('div', { class: 'insp-section' }, [U.el('h4', { text: '内战战报' })]);
+      sec.appendChild(U.el('button', {
+        class: 'insp-btn',
+        text: '查看战报（' + nBattles + '）',
+        onclick: function () { openMirrorBattleLog(g); }
+      }));
+      insp.appendChild(sec);
+    }
   }
 
   function mixSection(title, obj, total) {
@@ -1345,16 +1647,17 @@ window.AC = window.AC || {};
     const pinT = mkTierTable('不同品级下的胜负', p.byPinList, '品级', filters.pinTier);
     if (pinT) insp.appendChild(pinT);
 
-    // 原始对局
-    const list = r.battles.filter(function (b) { return p.battleIds.indexOf(b.id) >= 0; })
-      .sort(function (a, b) { return (b.ts || 0) - (a.ts || 0); });
-    const sec = U.el('div', { class: 'insp-section' }, [U.el('h4', { text: '原始对局（' + list.length + '）' })]);
-    // 标出当前这对阵容里「左侧那套」是哪一边，方便对照胜负
-    list.slice(0, 30).forEach(function (b) { sec.appendChild(battleMini(b, k1)); });
-    if (list.length > 30) {
-      sec.appendChild(U.el('div', { class: 'hint', text: '仅显示最近 30 条，完整记录见「原始战报」页。' }));
+    // 原始对局：不再内联展示对局列表，改为「查看战报」按钮，点开用浮框面板看详细对局明细
+    const nBattles = p.battleIds ? p.battleIds.length : 0;
+    if (nBattles) {
+      const sec = U.el('div', { class: 'insp-section' }, [U.el('h4', { text: '原始对局（' + nBattles + '）' })]);
+      sec.appendChild(U.el('button', {
+        class: 'insp-btn',
+        text: '查看战报（' + nBattles + '）',
+        onclick: function () { openPairBattleLog(p, k1, k2, nameA, nameB); }
+      }));
+      insp.appendChild(sec);
     }
-    insp.appendChild(sec);
 
     // 切换对阵后详情面板从头看
     U.scrollTopAll(insp);

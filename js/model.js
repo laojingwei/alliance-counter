@@ -127,13 +127,21 @@ window.AC = window.AC || {};
   function chainedPair(prev, cur) {
     if (!prev || !cur || prev.result !== 'draw') return false;
     if (!samePair(prev, cur)) return false;
+    /* 双方都要接得上才算同一场：真实续战里「开战兵力 = 上一段剩余」对两边同时成立
+       （实测 703 处续战 p50~p99 的衔接误差全是 0）；而「同一对玩家打完一场后各自
+       换一支部队再打下一场」时，只有一方的兵力会因 5% 容差偶然落进范围
+       （实测 3 处全是这种：如 33000→30295 剩 30295，下一场守方开战 31768，差 1473，
+       恰在容差 1588 内，但攻方 1208 vs 26622 完全接不上 —— 明显是两场独立的战斗）。 */
+    let checked = 0;
     for (let k = 0; k < 2; k++) {
       const which = k === 0 ? 'atk' : 'def';
       const ps = prev[which], cs = cur[which];
       if (!ps || !cs) continue;
-      if (closeOrigin(cs.origin, ps.remain)) return true;
+      if (ps.remain === null || ps.remain === undefined) continue;
+      checked++;
+      if (!closeOrigin(cs.origin, ps.remain)) return false;
     }
-    return false;
+    return checked > 0;
   }
 
   /**
